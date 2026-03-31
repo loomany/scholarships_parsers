@@ -1,0 +1,6 @@
+# Парсеры и запись в Supabase (отдельно от Next.js)
+supabase>=2.10.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+openai>=1.40.0
