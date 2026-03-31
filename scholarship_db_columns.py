@@ -11,8 +11,9 @@
   supabase/migrations/20260330190000_scholarships_full_content_html.sql
   supabase/migrations/20260330200000_scholarships_normalization_seo.sql
   supabase/migrations/20260401000000_scholarships_full_schema_reconcile.sql — полный reconcile
+  supabase/migrations/20260331120000_scholarship_ai_finalization.sql — единый AI finalization + SEO
 
-При добавлении поля: обновить этот tuple, SCHOLARSHIP_TABLE_KEYS в scholarship_america (импорт),
+При добавлении поля: обновить этот tuple, импорт SCHOLARSHIP_TABLE_KEYS в парсерах,
 миграцию и types_db (npm run supabase:generate-types после push).
 """
 
@@ -111,9 +112,36 @@ SCHOLARSHIP_UPSERT_BODY_KEYS: tuple[str, ...] = (
     "category_slug",
     "tags",
     "is_active",
+    "ai_student_summary",
+    "ai_best_for",
+    "ai_key_highlights",
+    "ai_eligibility_summary",
+    "ai_important_checks",
+    "ai_application_tips",
+    "ai_why_apply",
+    "ai_red_flags",
+    "ai_missing_info",
+    "ai_urgency_level",
+    "ai_difficulty_level",
+    "ai_match_score",
+    "ai_match_band",
+    "ai_score_explanation",
+    "ai_confidence_score",
+    "seo_excerpt",
+    "seo_overview",
+    "seo_eligibility",
+    "seo_application",
+    "seo_faq",
     "raw_data",
 )
 
 SCHOLARSHIP_UPSERT_PAYLOAD_KEYS: frozenset[str] = frozenset(
     SCHOLARSHIP_UPSERT_BODY_KEYS
 ) | frozenset({"text_fingerprint", "last_seen_at"})
+
+# Ключи для доп. None в build_full_record парсеров — без AI/SEO (их задаёт только finalizer + upsert).
+SCHOLARSHIP_RECORD_DEFAULT_KEYS: tuple[str, ...] = tuple(
+    k
+    for k in SCHOLARSHIP_UPSERT_BODY_KEYS
+    if not (str(k).startswith("ai_") or str(k).startswith("seo_"))
+)

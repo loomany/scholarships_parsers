@@ -1,57 +1,68 @@
 """
-Точка входа: загрузка .env и запуск парсеров.
+Точка входа: load_dotenv до любых импортов sources.*, затем запуск по GlobalConfig.
 
-По умолчанию: только Scholarship America (как раньше).
-
-Список источников — переменная окружения PARSER_SOURCES:
-  - scholarship_america — только Scholarship America
-  - simpler_grants_gov — только Simpler.Grants.gov (HTML /search, без API-ключа)
-  - all — оба по очереди (ошибка одного источника не останавливает второй)
-  - через запятую, например: scholarship_america,simpler_grants_gov
+Включение источника: PARSER_SOURCES содержит ключ + соответствующий *_ENABLED=1.
+Решение «запускать или нет» — только здесь (парсеры не делают early return по ENABLED).
 """
 
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 
-# Чтобы можно было запускать из любой папки: python parsers/run_all.py
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _BASE_DIR)
 
 from dotenv import load_dotenv
 
-from sources.scholarship_america import run as run_scholarship_america
-from sources.simpler_grants_gov import run as run_simpler_grants_gov
+load_dotenv(os.path.join(_BASE_DIR, ".env"))
+load_dotenv(os.path.join(_BASE_DIR, "..", ".env"))
 
+from config import (
+    CANONICAL_SOURCE_KEYS,
+    get_global_config,
+    get_str,
+    print_env_by_prefix,
+    print_parser_config_summary,
+    source_enabled,
+)
 
-def _parse_parser_sources() -> list[str]:
-    raw = (os.environ.get("PARSER_SOURCES") or "scholarship_america").strip().lower()
-    if raw == "all":
-        return ["scholarship_america", "simpler_grants_gov"]
-    parts = [p.strip() for p in raw.split(",") if p.strip()]
-    return parts or ["scholarship_america"]
+_SOURCE_MODULES: dict[str, tuple[str, str]] = {
+    "scholarship_america": ("Scholarship America", "sources.scholarship_america"),
+    "simpler_grants_gov": ("Simpler.Grants.gov", "sources.simpler_grants_gov"),
+    "bigfuture": ("BigFuture (College Board)", "sources.bigfuture"),
+}
+# Каждый ключ — пакет с __init__.py, экспортирующим run (см. sources/<key>/parser.py).
 
 
 def main() -> None:
-    env_path = os.path.join(os.path.dirname(__file__), ".env")
-    load_dotenv(env_path)
-    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+    dbg_prefix = get_str("PARSER_DEBUG_ENV_PREFIX", "")
+    if dbg_prefix:
+        print_env_by_prefix(dbg_prefix)
+        print("")
 
-    registry: dict[str, tuple[str, object]] = {
-        "scholarship_america": ("Scholarship America", run_scholarship_america),
-        "simpler_grants_gov": ("Simpler.Grants.gov", run_simpler_grants_gov),
-    }
+    gc = get_global_config()
+    names = gc.resolved_source_keys()
+    print_parser_config_summary(names)
 
-    names = _parse_parser_sources()
     for key in names:
-        if key not in registry:
-            print(f"Неизвестный источник в PARSER_SOURCES: {key!r}. Доступно: {sorted(registry)}")
+        if key not in _SOURCE_MODULES:
+            print(
+                f"Неизвестный источник в PARSER_SOURCES: {key!r}. "
+                f"Канонические ключи: {list(CANONICAL_SOURCE_KEYS)}"
+            )
             continue
-        label, run_fn = registry[key]
+        label, modname = _SOURCE_MODULES[key]
+        if not source_enabled(key):
+            print("")
+            print(f"========== {label} ({key}) — ПРОПУСК: ENABLED=0 ==========")
+            continue
         print("")
         print(f"========== {label} ({key}) ==========")
         try:
-            run_fn()
+            mod = importlib.import_module(modname)
+            mod.run()
         except Exception as e:
             print(f"Ошибка источника {key}: {e}")
         print(f"========== конец: {key} ==========")

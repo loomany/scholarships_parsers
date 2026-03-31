@@ -200,6 +200,10 @@ def upsert_scholarship(record: Mapping[str, Any]) -> dict[str, Any]:
     if "source" not in record or "url" not in record or "title" not in record:
         raise ValueError("В record обязательны ключи: source, url, title")
 
+    from sources.shared_scholarship_ai import apply_scholarship_ai_finalization_if_enabled
+
+    record = apply_scholarship_ai_finalization_if_enabled(dict(record))
+
     client = get_client()
     source = str(record["source"]).strip()
     url = str(record["url"]).strip()
