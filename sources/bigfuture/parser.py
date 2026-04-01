@@ -1,9 +1,9 @@
 """
 Парсер BigFuture Scholarship Search (College Board) → public.scholarships (Supabase).
 
-Листинг: стабильный JSON API (POST scholarshipsearch-api.collegeboard.org/scholarships)
-после открытия страницы поиска в Playwright (нужен контекст браузера / referer).
-Деталь: SSR __NEXT_DATA__ на странице /scholarships/{programTitleSlug} (опционально).
+Листинг: direct HTTP к стабильному JSON API
+(GET /scholarship-search bootstrap + POST scholarshipsearch-api.collegeboard.org/scholarships).
+Деталь: SSR __NEXT_DATA__ на странице /scholarships/{programTitleSlug} (Playwright, опционально).
 
 Конфигурация: config.BigFutureConfig + GlobalConfig; шаблон — README.md и .env.example в этом пакете.
   Включение — BIGFUTURE_ENABLED в run_all.
@@ -28,6 +28,7 @@ import time
 from datetime import date
 from typing import Any, NamedTuple
 
+import requests
 from bs4 import BeautifulSoup
 from playwright.sync_api import Page, Playwright, sync_playwright
 
@@ -319,6 +320,7 @@ _LIST_INCLUDE_FIELDS: list[str] = [
 ]
 
 _pw_holder: dict[str, Any] = {}
+_list_http_holder: dict[str, Any] = {}
 
 
 def _list_post_body(from_offset: int) -> dict[str, Any]:
@@ -406,7 +408,6 @@ def _start_playwright() -> tuple[Playwright, Any, Page]:
     browser = pw.chromium.launch(headless=BIGFUTURE_HEADLESS)
     page = browser.new_page()
     page.set_default_timeout(BIGFUTURE_TIMEOUT_MS)
-    page.goto(SEARCH_URL, wait_until="networkidle", timeout=BIGFUTURE_TIMEOUT_MS)
     return pw, browser, page
 
 
@@ -442,26 +443,64 @@ def _ensure_page() -> Page:
     return page
 
 
-def _post_scholarships_list(page: Page, body: dict[str, Any]) -> dict[str, Any]:
-    js = """
-    async (body) => {
-        const r = await fetch('https://scholarshipsearch-api.collegeboard.org/scholarships', {
-            method: 'POST',
-            headers: {
-                'content-type': 'application/json',
-                'accept': 'application/json, text/plain, */*',
-            },
-            body: JSON.stringify(body),
-        });
-        const text = await r.text();
-        try {
-            return JSON.parse(text);
-        } catch (e) {
-            return { _parseError: true, status: r.status, text: text.slice(0, 2000) };
+def _close_list_http_session() -> None:
+    sess = _list_http_holder.get("session")
+    try:
+        if sess:
+            sess.close()
+    except Exception:
+        pass
+    _list_http_holder.clear()
+
+
+def _ensure_list_http_session() -> requests.Session:
+    sess = _list_http_holder.get("session")
+    if isinstance(sess, requests.Session):
+        return sess
+    sess = requests.Session()
+    sess.headers.update(
+        {
+            "accept": "application/json, text/plain, */*",
+            "content-type": "application/json",
+            "origin": SITE_ORIGIN,
+            "referer": SEARCH_URL,
+            "user-agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+            ),
         }
-    }
-    """
-    return page.evaluate(js, body)
+    )
+    _list_http_holder["session"] = sess
+    return sess
+
+
+def _bootstrap_list_http_session(sess: requests.Session) -> None:
+    if _list_http_holder.get("bootstrapped"):
+        return
+    r = sess.get(SEARCH_URL, timeout=BIGFUTURE_TIMEOUT_MS / 1000)
+    r.raise_for_status()
+    _list_http_holder["bootstrapped"] = True
+
+
+def _post_scholarships_list(body: dict[str, Any]) -> dict[str, Any]:
+    sess = _ensure_list_http_session()
+    _bootstrap_list_http_session(sess)
+    r = sess.post(SCHOLARSHIPS_API, json=body, timeout=BIGFUTURE_TIMEOUT_MS / 1000)
+    if r.status_code >= 400:
+        return {
+            "_parseError": True,
+            "status": r.status_code,
+            "text": (r.text or "")[:2000],
+        }
+    try:
+        payload = r.json()
+    except Exception:
+        return {
+            "_parseError": True,
+            "status": r.status_code,
+            "text": (r.text or "")[:2000],
+        }
+    return payload if isinstance(payload, dict) else {"data": payload}
 
 
 class BigFutureListPageResult(NamedTuple):
@@ -486,10 +525,9 @@ def fetch_list_page(
     all_usable_rows_expired — все карточки с slug/title отсеяны только по closeDate (для лога).
     """
     empty = BigFutureListPageResult([], 0, False)
-    pg = _ensure_page()
     from_offset = max(0, (max(1, int(page)) - 1) * LIST_PAGE_SIZE)
     payload = _list_post_body(from_offset)
-    raw = _post_scholarships_list(pg, payload)
+    raw = _post_scholarships_list(payload)
     if not isinstance(raw, dict):
         return empty
     if raw.get("_parseError"):
@@ -1357,7 +1395,6 @@ def _run_bigfuture_auto_pipeline(
     phase1_ok = False
     list_pages_loaded = 0
     try:
-        _ensure_page()
         list_pages_loaded, stop_reason = _bigfuture_run_list_prefilter_scan(
             bf,
             store,
@@ -1511,7 +1548,7 @@ def run() -> None:
     queries = _listing_queries()
     list_page_cap = bf.fast_max_pages if bf.fast_max_pages > 0 else MAX_LIST_PAGES
     print(
-        f"{SOURCE}: Playwright + scholarshipsearch API "
+        f"{SOURCE}: direct HTTP list API + Playwright detail "
         f"(TARGET_NEW_ITEMS={TARGET_NEW_ITEMS}, effective_target_upserts={effective_target}, "
         f"BIGFUTURE_MAX_RECORDS_DEBUG={cap_dbg} (0=unlimited), "
         f"MAX_LIST_PAGES={MAX_LIST_PAGES}, LIST_PAGE_CAP={list_page_cap}, "
@@ -1589,7 +1626,6 @@ def run() -> None:
                     )
                 store.save()
             else:
-                _ensure_page()
                 queue_target: list[tuple[dict[str, Any], str]] | None = (
                     None if bf.fast_prefilter_only else session_deep_queue
                 )
@@ -1642,6 +1678,7 @@ def run() -> None:
                 show_list_requests=not bf.deep_pass_only,
             )
     finally:
+        _close_list_http_session()
         _close_playwright()
 
 
