@@ -37,7 +37,12 @@ def backfill(
     force: bool,
     debug_sample_size: int,
 ) -> None:
+    if batch_size <= 0:
+        raise ValueError("batch_size must be > 0")
+
     client = get_client()
+    total_rows_res = client.table("scholarships").select("id", count="exact", head=True).execute()
+    total_rows = int(total_rows_res.count or 0)
 
     processed = 0
     updated = 0
@@ -58,6 +63,8 @@ def backfill(
     offset = 0
     while True:
         if limit is not None and processed >= limit:
+            break
+        if limit is None and offset >= total_rows:
             break
 
         end = offset + batch_size - 1
@@ -82,6 +89,11 @@ def backfill(
         )
         rows = res.data or []
         if not rows:
+            if limit is None and processed < total_rows:
+                print(
+                    "WARNING: pagination returned no rows before reaching total count "
+                    f"(processed={processed}, total={total_rows}, offset={offset})."
+                )
             break
 
         for row in rows:
@@ -163,14 +175,15 @@ def backfill(
                 client.table("scholarships").update(payload).eq("id", row["id"]).execute()
             updated += 1
 
-        if len(rows) < batch_size:
-            break
-        offset += batch_size
+        offset += len(rows)
 
     print("=== Backfill GPA/location/easy-apply/completeness filters ===")
+    print(f"total rows in DB: {total_rows}")
     print(f"rows processed: {processed}")
     print(f"rows updated: {updated}{' (dry run)' if dry_run else ''}")
     print(f"rows skipped (unchanged): {skipped}")
+    if limit is None:
+        print(f"processed equals total rows: {processed == total_rows}")
     print(f"force mode: {force}")
     print("counts by gpa bucket:")
     for key, count in sorted(gpa_bucket_counter.items()):
