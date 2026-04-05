@@ -293,7 +293,21 @@ def derive_location_tags(record: dict[str, Any], blob: str | None = None) -> lis
 
 
 def derive_easy_apply_flags(record: dict[str, Any], blob: str | None = None) -> list[str]:
-    text = blob if blob is not None else _build_derivation_blob(record)
+    base_text = blob if blob is not None else _build_derivation_blob(record)
+    apply_context = " ".join(
+        _to_text(record.get(key))
+        for key in (
+            "apply_button_text",
+            "application_status_text",
+            "requirements_text",
+            "notification_text",
+            "apply_url",
+            "provider_name",
+            "raw_data",
+        )
+        if record.get(key)
+    )
+    text = f"{base_text} {apply_context}".strip().lower()
     out: list[str] = []
 
     def add(flag: str) -> None:
@@ -314,9 +328,9 @@ def derive_easy_apply_flags(record: dict[str, Any], blob: str | None = None) -> 
     except (TypeError, ValueError):
         signal_count = None
 
-    if re.search(r"\b(easy apply|easy application)\b", text, re.I):
+    if re.search(r"\b(easy apply|easy application|simple apply|simple application)\b", text, re.I):
         add("easy_apply")
-    if re.search(r"\b(quick apply|one[-\s]?click apply|fast apply)\b", text, re.I):
+    if re.search(r"\b(quick apply|one[-\s]?click apply|fast apply|instant apply)\b", text, re.I):
         add("quick_apply")
     if re.search(r"\b(few requirements|minimal requirements|simple application)\b", text, re.I):
         add("few_requirements")
@@ -324,21 +338,43 @@ def derive_easy_apply_flags(record: dict[str, Any], blob: str | None = None) -> 
     if req_count is not None and req_count <= 2:
         add("few_requirements")
 
-    low_friction = (
-        bool(record.get("apply_button_text"))
-        and bool(record.get("application_status_text"))
-        and not record.get("essay_required")
-        and not record.get("recommendation_required")
-        and not record.get("transcript_required")
+    has_apply_surface = bool(
+        record.get("apply_button_text")
+        or record.get("application_status_text")
+        or record.get("apply_url")
     )
-    if low_friction and (signal_count is None or signal_count <= 2):
+    heavy_requirements = any(
+        record.get(key) is True
+        for key in (
+            "essay_required",
+            "document_required",
+            "photo_required",
+            "link_required",
+            "question_required",
+            "recommendation_required",
+            "transcript_required",
+        )
+    )
+    low_friction = has_apply_surface and not heavy_requirements
+    low_requirement_signals = (
+        (signal_count is not None and signal_count <= 2)
+        or (req_count is not None and req_count <= 2)
+        or signal_count is None
+    )
+    very_low_requirement_signals = (
+        (signal_count is not None and signal_count <= 1)
+        or (req_count is not None and req_count <= 1)
+    )
+
+    if low_friction and low_requirement_signals:
         add("easy_apply")
+    if low_friction and (very_low_requirement_signals or "easy_apply" in out):
         add("quick_apply")
 
     return out
 
 
-def derive_listing_completeness(record: dict[str, Any], blob: str | None = None) -> tuple[str | None, bool]:
+def derive_listing_completeness(record: dict[str, Any], blob: str | None = None) -> tuple[str, bool]:
     text = blob if blob is not None else _build_derivation_blob(record)
     explicit_verified = bool(record.get("is_verified"))
     if not explicit_verified and (
@@ -375,13 +411,11 @@ def derive_listing_completeness(record: dict[str, Any], blob: str | None = None)
 
     if explicit_verified:
         return "verified_listing", True
-    if score >= 10:
+    if score >= 8:
         return "detailed_listing", False
-    if score >= 6:
+    if score >= 4:
         return "standard_detail", False
-    if score >= 2:
-        return "basic_info", False
-    return None, False
+    return "basic_info", False
 
 
 ELIGIBILITY_PATTERNS: list[tuple[str, list[str]]] = [
