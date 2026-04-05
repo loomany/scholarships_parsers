@@ -30,16 +30,19 @@ def _norm_list(value: object) -> list[str]:
     return out
 
 
-def backfill(batch_size: int, limit: int | None, dry_run: bool) -> None:
+def backfill(batch_size: int, limit: int | None, dry_run: bool, force: bool) -> None:
     client = get_client()
 
     processed = 0
     updated = 0
     no_derived = 0
+    skipped = 0
     gpa_bucket_counter: Counter[str] = Counter()
     location_tag_counter: Counter[str] = Counter()
     easy_apply_counter: Counter[str] = Counter()
     completeness_counter: Counter[str] = Counter()
+    old_completeness_counter: Counter[str] = Counter()
+    old_easy_apply_counter: Counter[str] = Counter()
     verified_true_count = 0
 
     offset = 0
@@ -63,6 +66,7 @@ def backfill(batch_size: int, limit: int | None, dry_run: bool) -> None:
                 "gpa_requirement_min,gpa_bucket,location_tags,easy_apply_flags,"
                 "listing_completeness_bucket"
             )
+            .order("id")
             .range(offset, end)
             .execute()
         )
@@ -98,18 +102,28 @@ def backfill(batch_size: int, limit: int | None, dry_run: bool) -> None:
             old_gpa_bucket = row.get("gpa_bucket")
             old_listing_bucket = row.get("listing_completeness_bucket")
             old_verified = bool(row.get("is_verified"))
+            if isinstance(old_listing_bucket, str) and old_listing_bucket:
+                old_completeness_counter[old_listing_bucket] += 1
+            else:
+                old_completeness_counter["NULL"] += 1
+            for flag in old_easy_apply:
+                old_easy_apply_counter[flag] += 1
+            if not old_easy_apply:
+                old_easy_apply_counter["none"] += 1
 
             if not any([gpa_bucket, location_tags, easy_apply_flags, listing_bucket, is_verified]):
                 no_derived += 1
 
-            if (
+            is_unchanged = (
                 old_gpa_min == gpa_requirement_min
                 and old_gpa_bucket == gpa_bucket
                 and old_location == location_tags
                 and old_easy_apply == easy_apply_flags
                 and old_listing_bucket == listing_bucket
                 and old_verified == is_verified
-            ):
+            )
+            if is_unchanged and not force:
+                skipped += 1
                 continue
 
             payload = {
@@ -131,6 +145,8 @@ def backfill(batch_size: int, limit: int | None, dry_run: bool) -> None:
     print("=== Backfill GPA/location/easy-apply/completeness filters ===")
     print(f"rows processed: {processed}")
     print(f"rows updated: {updated}{' (dry run)' if dry_run else ''}")
+    print(f"rows skipped (unchanged): {skipped}")
+    print(f"force mode: {force}")
     print("counts by gpa bucket:")
     for key, count in sorted(gpa_bucket_counter.items()):
         print(f"  {key}: {count}")
@@ -140,8 +156,14 @@ def backfill(batch_size: int, limit: int | None, dry_run: bool) -> None:
     print("counts by easy-apply flag:")
     for key, count in sorted(easy_apply_counter.items()):
         print(f"  {key}: {count}")
+    print("old counts by easy-apply flag:")
+    for key, count in sorted(old_easy_apply_counter.items()):
+        print(f"  {key}: {count}")
     print("counts by listing completeness bucket:")
     for key, count in sorted(completeness_counter.items()):
+        print(f"  {key}: {count}")
+    print("old counts by listing completeness bucket:")
+    for key, count in sorted(old_completeness_counter.items()):
         print(f"  {key}: {count}")
     print(f"is_verified=true rows derived: {verified_true_count}")
     print(f"rows with no derived values: {no_derived}")
@@ -152,9 +174,10 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=500)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
-    backfill(batch_size=args.batch_size, limit=args.limit, dry_run=args.dry_run)
+    backfill(batch_size=args.batch_size, limit=args.limit, dry_run=args.dry_run, force=args.force)
 
 
 if __name__ == "__main__":
