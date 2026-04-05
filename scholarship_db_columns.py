@@ -94,6 +94,8 @@ SCHOLARSHIP_UPSERT_BODY_KEYS: tuple[str, ...] = (
     "study_levels",
     "field_of_study",
     "citizenship_statuses",
+    "eligibility_tags",
+    "catalog_education_levels",
     "location_scope",
     "state_codes",
     "institution_types",
