@@ -314,7 +314,19 @@ def derive_easy_apply_flags(record: dict[str, Any], blob: str | None = None) -> 
         if flag not in out:
             out.append(flag)
 
-    if record.get("essay_required") is False or re.search(r"\bno\s+essay\b", text, re.I):
+    no_essay_explicit = bool(
+        re.search(
+            r"\b("
+            r"no\s+essay(?:\s+required)?|"
+            r"essay\s+not\s+required|"
+            r"no\s+personal\s+statement|"
+            r"personal\s+statement\s+not\s+required"
+            r")\b",
+            text,
+            re.I,
+        )
+    )
+    if record.get("essay_required") is False or no_essay_explicit:
         add("no_essay")
 
     req_count_raw = record.get("requirements_count")
@@ -328,11 +340,21 @@ def derive_easy_apply_flags(record: dict[str, Any], blob: str | None = None) -> 
     except (TypeError, ValueError):
         signal_count = None
 
-    if re.search(r"\b(easy apply|easy application|simple apply|simple application)\b", text, re.I):
+    easy_keyword_match = bool(
+        re.search(r"\b(easy apply|easy application|simple apply|simple application)\b", text, re.I)
+    )
+    quick_keyword_match = bool(
+        re.search(r"\b(quick apply|one[-\s]?click apply|fast apply|instant apply)\b", text, re.I)
+    )
+    lightweight_keyword_match = bool(
+        re.search(r"\b(few requirements|minimal requirements|simple application)\b", text, re.I)
+    )
+
+    if easy_keyword_match:
         add("easy_apply")
-    if re.search(r"\b(quick apply|one[-\s]?click apply|fast apply|instant apply)\b", text, re.I):
+    if quick_keyword_match:
         add("quick_apply")
-    if re.search(r"\b(few requirements|minimal requirements|simple application)\b", text, re.I):
+    if lightweight_keyword_match:
         add("few_requirements")
 
     if req_count is not None and req_count <= 2:
@@ -356,19 +378,28 @@ def derive_easy_apply_flags(record: dict[str, Any], blob: str | None = None) -> 
         )
     )
     low_friction = has_apply_surface and not heavy_requirements
-    low_requirement_signals = (
-        (signal_count is not None and signal_count <= 2)
+    explicit_lightweight_signal = (
+        lightweight_keyword_match
         or (req_count is not None and req_count <= 2)
-        or signal_count is None
     )
-    very_low_requirement_signals = (
-        (signal_count is not None and signal_count <= 1)
-        or (req_count is not None and req_count <= 1)
+    explicit_ultra_light_signal = (
+        (req_count is not None and req_count <= 1)
+        or bool(re.search(r"\b(one[-\s]?step|single[-\s]?step)\b", text, re.I))
     )
 
-    if low_friction and low_requirement_signals:
+    if (
+        low_friction
+        and signal_count is not None
+        and signal_count <= 2
+        and explicit_lightweight_signal
+    ):
         add("easy_apply")
-    if low_friction and (very_low_requirement_signals or "easy_apply" in out):
+    if (
+        low_friction
+        and signal_count is not None
+        and signal_count <= 1
+        and explicit_ultra_light_signal
+    ):
         add("quick_apply")
 
     return out
@@ -390,39 +421,39 @@ def derive_listing_completeness(record: dict[str, Any], blob: str | None = None)
     ):
         explicit_verified = True
 
-    def _present(*keys: str) -> bool:
+    def _present(*keys: str, min_text_len: int = 1) -> bool:
         for key in keys:
             value = record.get(key)
             if isinstance(value, str):
-                if value.strip():
+                if len(value.strip()) >= min_text_len:
                     return True
             elif value is not None and value is not False:
                 return True
         return False
 
     score = 0
-    if _present("title"):
+    if _present("title", min_text_len=4):
         score += 1
-    if _present("description"):
+    if _present("description", min_text_len=60):
         score += 1
-    if _present("provider_name"):
+    if _present("provider_name", min_text_len=3):
         score += 1
-    if _present("apply_url"):
+    if _present("apply_url", min_text_len=10):
         score += 1
     if _present("deadline_date", "deadline_text"):
         score += 1
-    if _present("eligibility_text", "requirements_text", "requirements_text_clean"):
+    if _present("eligibility_text", "requirements_text", "requirements_text_clean", min_text_len=30):
         score += 1
-    if _present("awards_text", "payment_details", "winner_payment_text"):
+    if _present("awards_text", "payment_details", "winner_payment_text", min_text_len=15):
         score += 1
-    if _present("notification_text", "support_email", "support_phone"):
+    if _present("notification_text", min_text_len=20) or _present("support_email", "support_phone"):
         score += 1
 
     if explicit_verified:
         return "verified_listing", True
-    if score >= 6:
+    if score >= 7:
         return "detailed_listing", False
-    if score >= 3:
+    if score >= 4:
         return "standard_detail", False
     return "basic_info", False
 

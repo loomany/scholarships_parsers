@@ -59,6 +59,8 @@ def backfill(
     debug_old_null_samples: list[str] = []
     debug_skip_samples: list[str] = []
     debug_bad_derived_samples: list[str] = []
+    tracked_easy_flags = ("no_essay", "easy_apply", "quick_apply")
+    tracked_listing_buckets = ("basic_info", "detailed_listing")
 
     offset = 0
     while True:
@@ -197,12 +199,22 @@ def backfill(
     print("old counts by easy-apply flag:")
     for key, count in sorted(old_easy_apply_counter.items()):
         print(f"  {key}: {count}")
+    print("tracked easy-apply deltas (new-old):")
+    for key in tracked_easy_flags:
+        new_count = easy_apply_counter.get(key, 0)
+        old_count = old_easy_apply_counter.get(key, 0)
+        print(f"  {key}: new={new_count} old={old_count} delta={new_count - old_count:+d}")
     print("counts by listing completeness bucket:")
     for key, count in sorted(completeness_counter.items()):
         print(f"  {key}: {count}")
     print("old counts by listing completeness bucket:")
     for key, count in sorted(old_completeness_counter.items()):
         print(f"  {key}: {count}")
+    print("tracked listing-completeness deltas (new-old):")
+    for key in tracked_listing_buckets:
+        new_count = completeness_counter.get(key, 0)
+        old_count = old_completeness_counter.get(key, 0)
+        print(f"  {key}: new={new_count} old={old_count} delta={new_count - old_count:+d}")
     print(f"is_verified=true rows derived: {verified_true_count}")
     print(f"rows with no derived values: {no_derived}")
     print(f"rows force-updated despite unchanged values: {forced_unchanged_updates}")
