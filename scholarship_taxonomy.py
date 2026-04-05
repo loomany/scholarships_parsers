@@ -376,44 +376,53 @@ def derive_easy_apply_flags(record: dict[str, Any], blob: str | None = None) -> 
 
 def derive_listing_completeness(record: dict[str, Any], blob: str | None = None) -> tuple[str, bool]:
     text = blob if blob is not None else _build_derivation_blob(record)
-    explicit_verified = bool(record.get("is_verified"))
+    raw_verified = record.get("is_verified")
+    explicit_verified = False
+    if isinstance(raw_verified, bool):
+        explicit_verified = raw_verified
+    elif isinstance(raw_verified, str):
+        explicit_verified = raw_verified.strip().lower() in {"true", "1", "yes", "y"}
+    elif isinstance(raw_verified, (int, float)):
+        explicit_verified = bool(raw_verified)
     if not explicit_verified and (
         re.search(r"\bverified\b", text, re.I)
         or re.search(r"\bofficial\b", text, re.I)
     ):
         explicit_verified = True
 
-    scored_fields = (
-        "title",
-        "description",
-        "provider_name",
-        "apply_url",
-        "deadline_date",
-        "deadline_text",
-        "eligibility_text",
-        "requirements_text",
-        "awards_text",
-        "notification_text",
-        "payment_details",
-        "support_email",
-        "support_phone",
-        "winner_payment_text",
-        "requirements_text_clean",
-    )
+    def _present(*keys: str) -> bool:
+        for key in keys:
+            value = record.get(key)
+            if isinstance(value, str):
+                if value.strip():
+                    return True
+            elif value is not None and value is not False:
+                return True
+        return False
+
     score = 0
-    for key in scored_fields:
-        value = record.get(key)
-        if isinstance(value, str):
-            if value.strip():
-                score += 1
-        elif value:
-            score += 1
+    if _present("title"):
+        score += 1
+    if _present("description"):
+        score += 1
+    if _present("provider_name"):
+        score += 1
+    if _present("apply_url"):
+        score += 1
+    if _present("deadline_date", "deadline_text"):
+        score += 1
+    if _present("eligibility_text", "requirements_text", "requirements_text_clean"):
+        score += 1
+    if _present("awards_text", "payment_details", "winner_payment_text"):
+        score += 1
+    if _present("notification_text", "support_email", "support_phone"):
+        score += 1
 
     if explicit_verified:
         return "verified_listing", True
-    if score >= 8:
+    if score >= 6:
         return "detailed_listing", False
-    if score >= 4:
+    if score >= 3:
         return "standard_detail", False
     return "basic_info", False
 
