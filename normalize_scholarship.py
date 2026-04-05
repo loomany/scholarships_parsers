@@ -13,8 +13,12 @@ from typing import Any
 
 from scholarship_taxonomy import (
     build_taxonomy_blob,
+    derive_easy_apply_flags,
     derive_catalog_education_levels,
     derive_eligibility_tags,
+    derive_gpa_fields,
+    derive_listing_completeness,
+    derive_location_tags,
 )
 
 # Maps to UI category ids (scholarshipCategories.ts)
@@ -1004,6 +1008,11 @@ def apply_normalization(record: dict[str, Any]) -> None:
     taxonomy_blob = build_taxonomy_blob(record)
     record["eligibility_tags"] = derive_eligibility_tags(record, taxonomy_blob)
     record["catalog_education_levels"] = derive_catalog_education_levels(record, taxonomy_blob)
+    gpa_requirement_min, gpa_bucket = derive_gpa_fields(record, taxonomy_blob)
+    record["gpa_requirement_min"] = gpa_requirement_min
+    record["gpa_bucket"] = gpa_bucket
+    record["location_tags"] = derive_location_tags(record, taxonomy_blob)
+    record["easy_apply_flags"] = derive_easy_apply_flags(record, taxonomy_blob)
 
     stt = record.get("state_territory_text")
     if isinstance(stt, str):
@@ -1021,6 +1030,9 @@ def apply_normalization(record: dict[str, Any]) -> None:
     cscore, cbucket = _credibility(record, blob)
     record["credibility_score"] = cscore
     record["credibility_bucket"] = cbucket
+    listing_bucket, is_verified = derive_listing_completeness(record, taxonomy_blob)
+    record["listing_completeness_bucket"] = listing_bucket
+    record["is_verified"] = is_verified
 
     elig_bullets = _eligibility_bullet_lines(record)
     record["who_can_apply"] = "\n".join(elig_bullets) if elig_bullets else None
