@@ -11,6 +11,12 @@ import re
 from datetime import date, datetime, timezone
 from typing import Any
 
+from scholarship_taxonomy import (
+    build_taxonomy_blob,
+    derive_catalog_education_levels,
+    derive_eligibility_tags,
+)
+
 # Maps to UI category ids (scholarshipCategories.ts)
 CATEGORY_RULES: list[tuple[str, list[str]]] = [
     (
@@ -994,6 +1000,10 @@ def apply_normalization(record: dict[str, Any]) -> None:
     record["study_levels"] = []
     record["field_of_study"] = []
     record["citizenship_statuses"] = []
+
+    taxonomy_blob = build_taxonomy_blob(record)
+    record["eligibility_tags"] = derive_eligibility_tags(record, taxonomy_blob)
+    record["catalog_education_levels"] = derive_catalog_education_levels(record, taxonomy_blob)
 
     stt = record.get("state_territory_text")
     if isinstance(stt, str):
