@@ -1,4 +1,4 @@
-"""Shared taxonomy derivation helpers for scholarship eligibility and education levels."""
+"""Shared normalization helpers for scholarship taxonomy/filter fields."""
 
 from __future__ import annotations
 
@@ -54,6 +54,334 @@ def build_taxonomy_blob(record: dict[str, Any]) -> str:
             parts.append(_strip_html_to_text(value))
 
     return " ".join(parts).lower()
+
+
+_TEXT_FIELDS_FOR_DERIVATION: tuple[str, ...] = (
+    "title",
+    "description",
+    "eligibility_text",
+    "requirements_text",
+    "awards_text",
+    "notification_text",
+    "payment_details",
+    "institutions_text",
+    "field_of_study",
+    "summary_short",
+    "summary_long",
+    "who_can_apply",
+    "state_territory_text",
+    "raw_data",
+)
+
+
+US_STATE_CANONICAL_BY_TOKEN: dict[str, str] = {
+    "alabama": "AL",
+    "al": "AL",
+    "alaska": "AK",
+    "ak": "AK",
+    "arizona": "AZ",
+    "az": "AZ",
+    "arkansas": "AR",
+    "ar": "AR",
+    "california": "CA",
+    "ca": "CA",
+    "colorado": "CO",
+    "co": "CO",
+    "connecticut": "CT",
+    "ct": "CT",
+    "delaware": "DE",
+    "de": "DE",
+    "florida": "FL",
+    "fl": "FL",
+    "georgia": "GA",
+    "ga": "GA",
+    "hawaii": "HI",
+    "hi": "HI",
+    "idaho": "ID",
+    "id": "ID",
+    "illinois": "IL",
+    "il": "IL",
+    "indiana": "IN",
+    "in": "IN",
+    "iowa": "IA",
+    "ia": "IA",
+    "kansas": "KS",
+    "ks": "KS",
+    "kentucky": "KY",
+    "ky": "KY",
+    "louisiana": "LA",
+    "la": "LA",
+    "maine": "ME",
+    "me": "ME",
+    "maryland": "MD",
+    "md": "MD",
+    "massachusetts": "MA",
+    "ma": "MA",
+    "michigan": "MI",
+    "mi": "MI",
+    "minnesota": "MN",
+    "mn": "MN",
+    "mississippi": "MS",
+    "ms": "MS",
+    "missouri": "MO",
+    "mo": "MO",
+    "montana": "MT",
+    "mt": "MT",
+    "nebraska": "NE",
+    "ne": "NE",
+    "nevada": "NV",
+    "nv": "NV",
+    "new hampshire": "NH",
+    "nh": "NH",
+    "new jersey": "NJ",
+    "nj": "NJ",
+    "new mexico": "NM",
+    "nm": "NM",
+    "new york": "NY",
+    "ny": "NY",
+    "north carolina": "NC",
+    "nc": "NC",
+    "north dakota": "ND",
+    "nd": "ND",
+    "ohio": "OH",
+    "oh": "OH",
+    "oklahoma": "OK",
+    "ok": "OK",
+    "oregon": "OR",
+    "or": "OR",
+    "pennsylvania": "PA",
+    "pa": "PA",
+    "rhode island": "RI",
+    "ri": "RI",
+    "south carolina": "SC",
+    "sc": "SC",
+    "south dakota": "SD",
+    "sd": "SD",
+    "tennessee": "TN",
+    "tn": "TN",
+    "texas": "TX",
+    "tx": "TX",
+    "utah": "UT",
+    "ut": "UT",
+    "vermont": "VT",
+    "vt": "VT",
+    "virginia": "VA",
+    "va": "VA",
+    "washington": "WA",
+    "wa": "WA",
+    "west virginia": "WV",
+    "wv": "WV",
+    "wisconsin": "WI",
+    "wi": "WI",
+    "wyoming": "WY",
+    "wy": "WY",
+    "district of columbia": "DC",
+    "dc": "DC",
+}
+
+GPA_BUCKETS: tuple[str, ...] = (
+    "no_gpa_requirement",
+    "gpa_2_0_plus",
+    "gpa_2_5_plus",
+    "gpa_3_0_plus",
+    "gpa_3_5_plus",
+)
+
+EASY_APPLY_FLAGS: tuple[str, ...] = (
+    "no_essay",
+    "easy_apply",
+    "quick_apply",
+    "few_requirements",
+)
+
+LISTING_COMPLETENESS_BUCKETS: tuple[str, ...] = (
+    "basic_info",
+    "standard_detail",
+    "detailed_listing",
+    "verified_listing",
+)
+
+
+def _build_derivation_blob(record: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key in _TEXT_FIELDS_FOR_DERIVATION:
+        value = record.get(key)
+        if value:
+            parts.append(_to_text(value))
+    return " ".join(parts).lower()
+
+
+_GPA_MIN_RE = re.compile(
+    r"(?:minimum|min\.?|at\s+least|must\s+have|maintain|require(?:s|d)?|"
+    r"gpa(?:\s+of)?|grade point average(?:\s+of)?)"
+    r"[^0-9]{0,16}(?P<gpa>[1-3](?:\.[0-9]{1,2})?|4(?:\.0{1,2})?)",
+    re.I,
+)
+_GPA_NAKED_RE = re.compile(
+    r"(?P<gpa>[1-3](?:\.[0-9]{1,2})?|4(?:\.0{1,2})?)\s*(?:gpa|grade point average)",
+    re.I,
+)
+_NO_GPA_RE = re.compile(
+    r"\b(no|not|without)\s+(minimum\s+)?gpa\b|"
+    r"\bno\s+gpa\s+requirement\b|"
+    r"\bgpa\s+(?:not\s+required|is\s+not\s+required)\b",
+    re.I,
+)
+
+
+def derive_gpa_fields(record: dict[str, Any], blob: str | None = None) -> tuple[float | None, str | None]:
+    text = blob if blob is not None else _build_derivation_blob(record)
+    best: float | None = None
+
+    for match in list(_GPA_MIN_RE.finditer(text)) + list(_GPA_NAKED_RE.finditer(text)):
+        try:
+            gpa = float(match.group("gpa"))
+        except (TypeError, ValueError):
+            continue
+        if gpa < 1.0 or gpa > 4.0:
+            continue
+        if best is None or gpa > best:
+            best = gpa
+
+    if best is not None:
+        if best >= 3.5:
+            return best, "gpa_3_5_plus"
+        if best >= 3.0:
+            return best, "gpa_3_0_plus"
+        if best >= 2.5:
+            return best, "gpa_2_5_plus"
+        return best, "gpa_2_0_plus"
+
+    if _NO_GPA_RE.search(text):
+        return None, "no_gpa_requirement"
+    return None, None
+
+
+def derive_location_tags(record: dict[str, Any], blob: str | None = None) -> list[str]:
+    text = blob if blob is not None else _build_derivation_blob(record)
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def add(code: str) -> None:
+        if code not in seen:
+            seen.add(code)
+            found.append(code)
+
+    direct_state_codes = record.get("state_codes")
+    if isinstance(direct_state_codes, list):
+        for token in direct_state_codes:
+            if isinstance(token, str):
+                mapped = US_STATE_CANONICAL_BY_TOKEN.get(token.strip().lower())
+                if mapped:
+                    add(mapped)
+    state_territory_text = record.get("state_territory_text")
+    if isinstance(state_territory_text, str):
+        for token in re.findall(
+            r"\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|"
+            r"MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\b",
+            state_territory_text.upper(),
+        ):
+            add(token)
+
+    normalized_text = f" {text} "
+    for token, canonical in US_STATE_CANONICAL_BY_TOKEN.items():
+        if len(token) == 2:
+            continue
+        if re.search(rf"\b{re.escape(token)}\b", normalized_text, re.I):
+            add(canonical)
+    return found
+
+
+def derive_easy_apply_flags(record: dict[str, Any], blob: str | None = None) -> list[str]:
+    text = blob if blob is not None else _build_derivation_blob(record)
+    out: list[str] = []
+
+    def add(flag: str) -> None:
+        if flag not in out:
+            out.append(flag)
+
+    if record.get("essay_required") is False or re.search(r"\bno\s+essay\b", text, re.I):
+        add("no_essay")
+
+    req_count_raw = record.get("requirements_count")
+    signal_count_raw = record.get("requirement_signals_count")
+    try:
+        req_count = int(req_count_raw) if req_count_raw is not None else None
+    except (TypeError, ValueError):
+        req_count = None
+    try:
+        signal_count = int(signal_count_raw) if signal_count_raw is not None else None
+    except (TypeError, ValueError):
+        signal_count = None
+
+    if re.search(r"\b(easy apply|easy application)\b", text, re.I):
+        add("easy_apply")
+    if re.search(r"\b(quick apply|one[-\s]?click apply|fast apply)\b", text, re.I):
+        add("quick_apply")
+    if re.search(r"\b(few requirements|minimal requirements|simple application)\b", text, re.I):
+        add("few_requirements")
+
+    if req_count is not None and req_count <= 2:
+        add("few_requirements")
+
+    low_friction = (
+        bool(record.get("apply_button_text"))
+        and bool(record.get("application_status_text"))
+        and not record.get("essay_required")
+        and not record.get("recommendation_required")
+        and not record.get("transcript_required")
+    )
+    if low_friction and (signal_count is None or signal_count <= 2):
+        add("easy_apply")
+        add("quick_apply")
+
+    return out
+
+
+def derive_listing_completeness(record: dict[str, Any], blob: str | None = None) -> tuple[str | None, bool]:
+    text = blob if blob is not None else _build_derivation_blob(record)
+    explicit_verified = bool(record.get("is_verified"))
+    if not explicit_verified and (
+        re.search(r"\bverified\b", text, re.I)
+        or re.search(r"\bofficial\b", text, re.I)
+    ):
+        explicit_verified = True
+
+    scored_fields = (
+        "title",
+        "description",
+        "provider_name",
+        "apply_url",
+        "deadline_date",
+        "deadline_text",
+        "eligibility_text",
+        "requirements_text",
+        "awards_text",
+        "notification_text",
+        "payment_details",
+        "support_email",
+        "support_phone",
+        "winner_payment_text",
+        "requirements_text_clean",
+    )
+    score = 0
+    for key in scored_fields:
+        value = record.get(key)
+        if isinstance(value, str):
+            if value.strip():
+                score += 1
+        elif value:
+            score += 1
+
+    if explicit_verified:
+        return "verified_listing", True
+    if score >= 10:
+        return "detailed_listing", False
+    if score >= 6:
+        return "standard_detail", False
+    if score >= 2:
+        return "basic_info", False
+    return None, False
 
 
 ELIGIBILITY_PATTERNS: list[tuple[str, list[str]]] = [
