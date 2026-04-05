@@ -47,10 +47,9 @@ def backfill(batch_size: int, limit: int | None, dry_run: bool) -> None:
         res = (
             client.table("scholarships")
             .select(
-                "id,title,description,summary_short,summary,summary_long,"
-                "requirements_text,eligibility_text,who_can_apply,"
-                "institutions_text,study_levels,field_of_study,raw_data,"
-                "description_html,eligibility_html,requirements_html,full_content_html,"
+                "id,title,description,eligibility_text,requirements_text,"
+                "awards_text,notification_text,payment_details,institutions_text,"
+                "field_of_study,"
                 "eligibility_tags,catalog_education_levels"
             )
             .range(offset, end)
