@@ -30,7 +30,13 @@ def _norm_list(value: object) -> list[str]:
     return out
 
 
-def backfill(batch_size: int, limit: int | None, dry_run: bool, force: bool) -> None:
+def backfill(
+    batch_size: int,
+    limit: int | None,
+    dry_run: bool,
+    force: bool,
+    debug_sample_size: int,
+) -> None:
     client = get_client()
 
     processed = 0
@@ -44,6 +50,10 @@ def backfill(batch_size: int, limit: int | None, dry_run: bool, force: bool) -> 
     old_completeness_counter: Counter[str] = Counter()
     old_easy_apply_counter: Counter[str] = Counter()
     verified_true_count = 0
+    forced_unchanged_updates = 0
+    debug_old_null_samples: list[str] = []
+    debug_skip_samples: list[str] = []
+    debug_bad_derived_samples: list[str] = []
 
     offset = 0
     while True:
@@ -84,6 +94,11 @@ def backfill(batch_size: int, limit: int | None, dry_run: bool, force: bool) -> 
             location_tags = derive_location_tags(row, blob)
             easy_apply_flags = derive_easy_apply_flags(row, blob)
             listing_bucket, is_verified = derive_listing_completeness(row, blob)
+            if listing_bucket not in {"basic_info", "standard_detail", "detailed_listing", "verified_listing"}:
+                if len(debug_bad_derived_samples) < debug_sample_size:
+                    debug_bad_derived_samples.append(
+                        f"id={row.get('id')} derived_bucket={listing_bucket!r} derived_verified={is_verified!r}"
+                    )
 
             if gpa_bucket:
                 gpa_bucket_counter[gpa_bucket] += 1
@@ -106,6 +121,10 @@ def backfill(batch_size: int, limit: int | None, dry_run: bool, force: bool) -> 
                 old_completeness_counter[old_listing_bucket] += 1
             else:
                 old_completeness_counter["NULL"] += 1
+                if len(debug_old_null_samples) < debug_sample_size:
+                    debug_old_null_samples.append(
+                        f"id={row.get('id')} old_bucket=NULL -> derived_bucket={listing_bucket} derived_verified={is_verified}"
+                    )
             for flag in old_easy_apply:
                 old_easy_apply_counter[flag] += 1
             if not old_easy_apply:
@@ -124,7 +143,13 @@ def backfill(batch_size: int, limit: int | None, dry_run: bool, force: bool) -> 
             )
             if is_unchanged and not force:
                 skipped += 1
+                if len(debug_skip_samples) < debug_sample_size:
+                    debug_skip_samples.append(
+                        f"id={row.get('id')} old_bucket={old_listing_bucket!r} derived_bucket={listing_bucket!r} force={force}"
+                    )
                 continue
+            if is_unchanged and force:
+                forced_unchanged_updates += 1
 
             payload = {
                 "gpa_requirement_min": gpa_requirement_min,
@@ -167,6 +192,19 @@ def backfill(batch_size: int, limit: int | None, dry_run: bool, force: bool) -> 
         print(f"  {key}: {count}")
     print(f"is_verified=true rows derived: {verified_true_count}")
     print(f"rows with no derived values: {no_derived}")
+    print(f"rows force-updated despite unchanged values: {forced_unchanged_updates}")
+    if debug_old_null_samples:
+        print("debug sample: old NULL listing_completeness_bucket rows:")
+        for line in debug_old_null_samples:
+            print(f"  {line}")
+    if debug_skip_samples:
+        print("debug sample: skipped rows:")
+        for line in debug_skip_samples:
+            print(f"  {line}")
+    if debug_bad_derived_samples:
+        print("debug sample: invalid derived listing_completeness_bucket rows:")
+        for line in debug_bad_derived_samples:
+            print(f"  {line}")
 
 
 def main() -> None:
@@ -175,9 +213,16 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--debug-sample-size", type=int, default=10)
     args = parser.parse_args()
 
-    backfill(batch_size=args.batch_size, limit=args.limit, dry_run=args.dry_run, force=args.force)
+    backfill(
+        batch_size=args.batch_size,
+        limit=args.limit,
+        dry_run=args.dry_run,
+        force=args.force,
+        debug_sample_size=max(0, args.debug_sample_size),
+    )
 
 
 if __name__ == "__main__":
