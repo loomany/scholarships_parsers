@@ -19,6 +19,9 @@ from scholarship_taxonomy import (
     derive_gpa_fields,
     derive_listing_completeness,
     derive_location_tags,
+    derive_structured_citizenship_statuses,
+    derive_structured_field_of_study,
+    derive_structured_study_levels,
 )
 
 # Maps to UI category ids (scholarshipCategories.ts)
@@ -1001,11 +1004,37 @@ def apply_normalization(record: dict[str, Any]) -> None:
     else:
         record["category_slug"] = None
 
-    record["study_levels"] = []
-    record["field_of_study"] = []
-    record["citizenship_statuses"] = []
-
     taxonomy_blob = build_taxonomy_blob(record)
+    existing_levels = record.get("study_levels")
+    if not isinstance(existing_levels, list):
+        existing_levels = []
+    existing_fos = record.get("field_of_study")
+    if not isinstance(existing_fos, list):
+        existing_fos = []
+    existing_cit = record.get("citizenship_statuses")
+    if not isinstance(existing_cit, list):
+        existing_cit = []
+
+    def _merge_unique_tokens(*values: list[str]) -> list[str]:
+        merged: list[str] = []
+        seen_local: set[str] = set()
+        for arr in values:
+            for item in arr:
+                if not isinstance(item, str):
+                    continue
+                tok = item.strip().lower()
+                if tok and tok not in seen_local:
+                    seen_local.add(tok)
+                    merged.append(tok)
+        return merged
+
+    derived_levels = derive_structured_study_levels(record, taxonomy_blob)
+    derived_fos = derive_structured_field_of_study(record, taxonomy_blob)
+    derived_citizenship = derive_structured_citizenship_statuses(record, taxonomy_blob)
+    record["study_levels"] = _merge_unique_tokens(existing_levels, derived_levels)
+    record["field_of_study"] = _merge_unique_tokens(existing_fos, derived_fos)
+    record["citizenship_statuses"] = _merge_unique_tokens(existing_cit, derived_citizenship)
+
     record["eligibility_tags"] = derive_eligibility_tags(record, taxonomy_blob)
     record["catalog_education_levels"] = derive_catalog_education_levels(record, taxonomy_blob)
     gpa_requirement_min, gpa_bucket = derive_gpa_fields(record, taxonomy_blob)

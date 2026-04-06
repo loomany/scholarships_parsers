@@ -926,6 +926,10 @@ def run() -> None:
         "skip_deadline_too_close": 0,
         "upsert_ok": 0,
         "upsert_failed": 0,
+        "taxonomy_study_levels_non_empty": 0,
+        "taxonomy_field_of_study_non_empty": 0,
+        "taxonomy_citizenship_non_empty": 0,
+        "taxonomy_all_empty": 0,
     }
     seen_urls_session: set[str] = set()
     consecutive_pages_no_new = 0
@@ -1056,6 +1060,17 @@ def run() -> None:
             try:
                 upsert_scholarship(record)
                 stats["upsert_ok"] += 1
+                has_levels = bool(record.get("study_levels"))
+                has_fos = bool(record.get("field_of_study"))
+                has_cit = bool(record.get("citizenship_statuses"))
+                if has_levels:
+                    stats["taxonomy_study_levels_non_empty"] += 1
+                if has_fos:
+                    stats["taxonomy_field_of_study_non_empty"] += 1
+                if has_cit:
+                    stats["taxonomy_citizenship_non_empty"] += 1
+                if not (has_levels or has_fos or has_cit):
+                    stats["taxonomy_all_empty"] += 1
                 print(f"  upsert OK ({stats['upsert_ok']}/{effective_target})")
             except Exception as e:
                 stats["upsert_failed"] += 1
@@ -1100,6 +1115,11 @@ def run() -> None:
     )
     print(f"upsert OK: {stats['upsert_ok']}")
     print(f"upsert failed: {stats['upsert_failed']}")
+    print("taxonomy coverage (on upserted rows):")
+    print(f"  study_levels non-empty: {stats['taxonomy_study_levels_non_empty']}")
+    print(f"  field_of_study non-empty: {stats['taxonomy_field_of_study_non_empty']}")
+    print(f"  citizenship_statuses non-empty: {stats['taxonomy_citizenship_non_empty']}")
+    print(f"  all three empty: {stats['taxonomy_all_empty']}")
     print(f"stop reason: {stop_reason}")
 
 
