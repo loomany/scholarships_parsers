@@ -12,6 +12,9 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from scholarship_taxonomy import (
+    CANONICAL_CITIZENSHIP_SLUGS,
+    CANONICAL_FIELD_OF_STUDY_SLUGS,
+    CANONICAL_STUDY_LEVEL_SLUGS,
     build_taxonomy_blob,
     derive_easy_apply_flags,
     derive_catalog_education_levels,
@@ -22,6 +25,7 @@ from scholarship_taxonomy import (
     derive_structured_citizenship_statuses,
     derive_structured_field_of_study,
     derive_structured_study_levels,
+    keep_only_canonical_slugs,
 )
 
 # Maps to UI category ids (scholarshipCategories.ts)
@@ -1005,15 +1009,18 @@ def apply_normalization(record: dict[str, Any]) -> None:
         record["category_slug"] = None
 
     taxonomy_blob = build_taxonomy_blob(record)
-    existing_levels = record.get("study_levels")
-    if not isinstance(existing_levels, list):
-        existing_levels = []
-    existing_fos = record.get("field_of_study")
-    if not isinstance(existing_fos, list):
-        existing_fos = []
-    existing_cit = record.get("citizenship_statuses")
-    if not isinstance(existing_cit, list):
-        existing_cit = []
+    existing_levels, dropped_levels = keep_only_canonical_slugs(
+        record.get("study_levels"),
+        CANONICAL_STUDY_LEVEL_SLUGS,
+    )
+    existing_fos, dropped_fos = keep_only_canonical_slugs(
+        record.get("field_of_study"),
+        CANONICAL_FIELD_OF_STUDY_SLUGS,
+    )
+    existing_cit, dropped_cit = keep_only_canonical_slugs(
+        record.get("citizenship_statuses"),
+        CANONICAL_CITIZENSHIP_SLUGS,
+    )
 
     def _merge_unique_tokens(*values: list[str]) -> list[str]:
         merged: list[str] = []
@@ -1028,12 +1035,49 @@ def apply_normalization(record: dict[str, Any]) -> None:
                     merged.append(tok)
         return merged
 
-    derived_levels = derive_structured_study_levels(record, taxonomy_blob)
-    derived_fos = derive_structured_field_of_study(record, taxonomy_blob)
-    derived_citizenship = derive_structured_citizenship_statuses(record, taxonomy_blob)
+    derived_levels_raw = derive_structured_study_levels(record, taxonomy_blob)
+    derived_fos_raw = derive_structured_field_of_study(record, taxonomy_blob)
+    derived_citizenship_raw = derive_structured_citizenship_statuses(record, taxonomy_blob)
+    derived_levels, dropped_derived_levels = keep_only_canonical_slugs(
+        derived_levels_raw,
+        CANONICAL_STUDY_LEVEL_SLUGS,
+    )
+    derived_fos, dropped_derived_fos = keep_only_canonical_slugs(
+        derived_fos_raw,
+        CANONICAL_FIELD_OF_STUDY_SLUGS,
+    )
+    derived_citizenship, dropped_derived_cit = keep_only_canonical_slugs(
+        derived_citizenship_raw,
+        CANONICAL_CITIZENSHIP_SLUGS,
+    )
+
     record["study_levels"] = _merge_unique_tokens(existing_levels, derived_levels)
     record["field_of_study"] = _merge_unique_tokens(existing_fos, derived_fos)
     record["citizenship_statuses"] = _merge_unique_tokens(existing_cit, derived_citizenship)
+
+    dropped_any = (
+        dropped_levels
+        or dropped_fos
+        or dropped_cit
+        or dropped_derived_levels
+        or dropped_derived_fos
+        or dropped_derived_cit
+    )
+    if dropped_any:
+        rd = record.get("raw_data")
+        if isinstance(rd, dict):
+            raw_data_map = dict(rd)
+        else:
+            raw_data_map = {}
+        raw_data_map["taxonomy_noncanonical_dropped"] = {
+            "study_levels_existing": dropped_levels,
+            "field_of_study_existing": dropped_fos,
+            "citizenship_existing": dropped_cit,
+            "study_levels_derived": dropped_derived_levels,
+            "field_of_study_derived": dropped_derived_fos,
+            "citizenship_derived": dropped_derived_cit,
+        }
+        record["raw_data"] = raw_data_map
 
     record["eligibility_tags"] = derive_eligibility_tags(record, taxonomy_blob)
     record["catalog_education_levels"] = derive_catalog_education_levels(record, taxonomy_blob)

@@ -756,3 +756,91 @@ def derive_structured_field_of_study(record: dict[str, Any], blob: str | None = 
 
 def derive_structured_citizenship_statuses(record: dict[str, Any], blob: str | None = None) -> list[str]:
     return _derive_by_rules(record, CITIZENSHIP_RULES, blob=blob)
+
+
+CANONICAL_STUDY_LEVEL_SLUGS: frozenset[str] = frozenset(
+    {
+        "high_school_freshman",
+        "high_school_sophomore",
+        "high_school_junior",
+        "high_school_senior",
+        "college_1",
+        "college_2",
+        "college_3",
+        "college_4",
+        "graduate_student",
+        "adult_non_traditional",
+    }
+)
+
+CANONICAL_FIELD_OF_STUDY_SLUGS: frozenset[str] = frozenset(
+    {
+        "agriculture_and_related_sciences",
+        "architecture_and_related_services",
+        "area_ethnic_cultural_and_gender_studies",
+        "biological_and_biomedical_sciences",
+        "business_management_and_marketing",
+        "communication_and_journalism",
+        "computer_and_information_sciences",
+        "construction_trades",
+        "education",
+        "engineering",
+        "english_language_and_literature",
+        "family_and_consumer_sciences",
+        "foreign_languages_literature_and_linguistics",
+        "health_professions_and_clinical_sciences",
+        "history",
+        "legal_professions_and_law_studies",
+        "liberal_arts_general_studies",
+        "library_science",
+        "mathematics_and_statistics",
+        "mechanic_and_repair_tech_technicians",
+        "military_technologies",
+        "multi_interdisciplinary_studies",
+        "natural_resources_and_conservation",
+        "parks_recreation_and_fitness_studies",
+        "personal_and_culinary_services",
+        "philosophy_and_religious_studies",
+        "physical_sciences",
+        "precision_production",
+        "psychology",
+        "public_administration_and_social_service",
+        "security_and_protective_services",
+        "social_sciences",
+        "technology_education_industrial_arts",
+        "theology_and_religious_vocations",
+        "transportation_and_materials_moving",
+        "visual_and_performing_arts",
+        "not_listed_other",
+    }
+)
+
+CANONICAL_CITIZENSHIP_SLUGS: frozenset[str] = frozenset(
+    {
+        "us_citizen",
+        "us_permanent_resident",
+        "international_student",
+    }
+)
+
+
+def keep_only_canonical_slugs(values: Any, allowed: frozenset[str]) -> tuple[list[str], list[str]]:
+    """
+    Возвращает (kept, dropped):
+      kept   — lowercased уникальные токены, входящие в allowed;
+      dropped — lowercased уникальные токены, не входящие в allowed.
+    """
+    kept: list[str] = []
+    dropped: list[str] = []
+    seen_kept: set[str] = set()
+    seen_dropped: set[str] = set()
+    for token in _flatten_text_values(values):
+        if token in allowed:
+            if token not in seen_kept:
+                seen_kept.add(token)
+                kept.append(token)
+        else:
+            if token not in seen_dropped:
+                seen_dropped.add(token)
+                dropped.append(token)
+    return kept, dropped
