@@ -507,3 +507,340 @@ def derive_catalog_education_levels(record: dict[str, Any], blob: str | None = N
     if "high_school_senior" in levels and "high_school" not in levels:
         levels.append("high_school")
     return levels
+
+
+def _normalize_text_token(value: Any) -> str:
+    if value is None:
+        return ""
+    return " ".join(str(value).strip().lower().split())
+
+
+def _flatten_text_values(value: Any) -> list[str]:
+    out: list[str] = []
+    if value is None:
+        return out
+    if isinstance(value, str):
+        s = _normalize_text_token(value)
+        if s:
+            out.append(s)
+        return out
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            out.extend(_flatten_text_values(item))
+        return out
+    if isinstance(value, dict):
+        for item in value.values():
+            out.extend(_flatten_text_values(item))
+        return out
+    s = _normalize_text_token(value)
+    if s:
+        out.append(s)
+    return out
+
+
+def _append_unique(tokens: list[str], token: str) -> None:
+    t = token.strip().lower()
+    if t and t not in tokens:
+        tokens.append(t)
+
+
+def _extract_candidate_tokens(record: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    for key in (
+        "study_levels",
+        "field_of_study",
+        "citizenship_statuses",
+        "eligibility_tags",
+        "catalog_education_levels",
+        "category",
+        "tags",
+        "eligibility_text",
+        "requirements_text",
+        "description",
+        "who_can_apply",
+        "raw_data",
+    ):
+        value = record.get(key)
+        if not value:
+            continue
+        for token in _flatten_text_values(value):
+            _append_unique(out, token)
+    return out
+
+
+SCHOOL_LEVEL_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
+    (
+        "high_school_freshman",
+        [
+            re.compile(r"\bhigh school (?:first[-\s]?year|freshman|9th grade)\b", re.I),
+            re.compile(r"\bfreshman in high school\b", re.I),
+        ],
+    ),
+    (
+        "high_school_sophomore",
+        [
+            re.compile(r"\bhigh school (?:second[-\s]?year|sophomore|10th grade)\b", re.I),
+            re.compile(r"\bsophomore in high school\b", re.I),
+        ],
+    ),
+    (
+        "high_school_junior",
+        [
+            re.compile(r"\bhigh school (?:third[-\s]?year|junior|11th grade)\b", re.I),
+            re.compile(r"\bjunior in high school\b", re.I),
+        ],
+    ),
+    (
+        "high_school_senior",
+        [
+            re.compile(r"\bhigh school (?:senior|fourth[-\s]?year|12th grade)\b", re.I),
+            re.compile(r"\bsenior year(?: in high school)?\b", re.I),
+        ],
+    ),
+    (
+        "college_1",
+        [
+            re.compile(r"\b(?:college|undergraduate) (?:first[-\s]?year|freshman)\b", re.I),
+            re.compile(r"\b1st[-\s]?year (?:college|student|undergraduate)\b", re.I),
+        ],
+    ),
+    (
+        "college_2",
+        [
+            re.compile(r"\b(?:college|undergraduate) (?:second[-\s]?year|sophomore)\b", re.I),
+            re.compile(r"\b2nd[-\s]?year (?:college|student|undergraduate)\b", re.I),
+        ],
+    ),
+    (
+        "college_3",
+        [
+            re.compile(r"\b(?:college|undergraduate) (?:third[-\s]?year|junior)\b", re.I),
+            re.compile(r"\b3rd[-\s]?year (?:college|student|undergraduate)\b", re.I),
+        ],
+    ),
+    (
+        "college_4",
+        [
+            re.compile(r"\b(?:college|undergraduate) (?:fourth[-\s]?year|senior)\b", re.I),
+            re.compile(r"\b4th[-\s]?year (?:college|student|undergraduate)\b", re.I),
+        ],
+    ),
+    (
+        "graduate_student",
+        [
+            re.compile(r"\bgraduate student\b", re.I),
+            re.compile(r"\bmaster'?s student\b", re.I),
+            re.compile(r"\bdoctoral student\b", re.I),
+            re.compile(r"\bph\.?d\.? student\b", re.I),
+            re.compile(r"\b(?:master'?s|doctorate|doctoral|postgraduate|grad school)\b", re.I),
+        ],
+    ),
+    (
+        "adult_non_traditional",
+        [
+            re.compile(r"\badult learner\b", re.I),
+            re.compile(r"\bnon[-\s]?traditional student\b", re.I),
+            re.compile(r"\bnon[-\s]?traditional\b", re.I),
+            re.compile(r"\breturning student\b", re.I),
+        ],
+    ),
+]
+
+
+FIELD_OF_STUDY_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
+    ("agriculture_and_related_sciences", [re.compile(r"\bagricultur\w*|animal science|agronomy|horticultur", re.I)]),
+    ("architecture_and_related_services", [re.compile(r"\barchitecture|urban planning|interior design", re.I)]),
+    ("area_ethnic_cultural_and_gender_studies", [re.compile(r"\bethnic studies|cultural studies|gender studies|area studies", re.I)]),
+    ("biological_and_biomedical_sciences", [re.compile(r"\bbiolog\w*|biomedical|biochemistry|genetics|molecular", re.I)]),
+    ("business_management_and_marketing", [re.compile(r"\bbusiness|management|marketing|finance|accounting|entrepreneur", re.I)]),
+    ("communication_and_journalism", [re.compile(r"\bjournalism|communications?|public relations|media studies", re.I)]),
+    ("computer_and_information_sciences", [re.compile(r"\bcomputer science|information (systems|technology)|software|cybersecurity|data science", re.I)]),
+    ("construction_trades", [re.compile(r"\bconstruction|carpentry|electrical trade|plumbing", re.I)]),
+    ("education", [re.compile(r"\beducation|teacher|teaching|pedagog", re.I)]),
+    ("engineering", [re.compile(r"\bengineering|mechanical engineer|civil engineer|electrical engineer", re.I)]),
+    ("english_language_and_literature", [re.compile(r"\benglish|literature|creative writing|composition", re.I)]),
+    ("family_and_consumer_sciences", [re.compile(r"\bfamily and consumer|human development|child development|home economics", re.I)]),
+    ("foreign_languages_literature_and_linguistics", [re.compile(r"\bforeign language|linguistics|spanish|french|german|arabic|chinese", re.I)]),
+    ("health_professions_and_clinical_sciences", [re.compile(r"\bnursing|medicine|health professions?|clinical|public health|pharmacy", re.I)]),
+    ("history", [re.compile(r"\bhistory\b|historical studies", re.I)]),
+    ("legal_professions_and_law_studies", [re.compile(r"\blaw\b|legal studies|paralegal|pre[-\s]?law", re.I)]),
+    ("liberal_arts_general_studies", [re.compile(r"\bliberal arts|general studies|undeclared major", re.I)]),
+    ("library_science", [re.compile(r"\blibrary science|archival studies|information science librarian", re.I)]),
+    ("mathematics_and_statistics", [re.compile(r"\bmathematics|statistics|applied math|actuarial", re.I)]),
+    ("mechanic_and_repair_tech_technicians", [re.compile(r"\bmechanic|repair tech|automotive technology|hvac technician", re.I)]),
+    ("military_technologies", [re.compile(r"\bmilitary technolog|defense technolog|ordnance", re.I)]),
+    ("multi_interdisciplinary_studies", [re.compile(r"\binterdisciplinary|multidisciplinary|integrated studies", re.I)]),
+    ("natural_resources_and_conservation", [re.compile(r"\bnatural resources?|conservation|environmental management|forestry", re.I)]),
+    ("parks_recreation_and_fitness_studies", [re.compile(r"\brecreation|parks?|kinesiology|fitness studies", re.I)]),
+    ("personal_and_culinary_services", [re.compile(r"\bculinary|cosmetology|personal services?|hospitality services", re.I)]),
+    ("philosophy_and_religious_studies", [re.compile(r"\bphilosophy|religious studies", re.I)]),
+    ("physical_sciences", [re.compile(r"\bphysics|chemistry|astronomy|geology|earth science", re.I)]),
+    ("precision_production", [re.compile(r"\bprecision production|machining|tool and die|manufacturing technology", re.I)]),
+    ("psychology", [re.compile(r"\bpsychology|psychological", re.I)]),
+    ("public_administration_and_social_service", [re.compile(r"\bpublic administration|social work|human services?|public policy", re.I)]),
+    ("security_and_protective_services", [re.compile(r"\bcriminal justice|protective services|homeland security|law enforcement|fire science", re.I)]),
+    ("social_sciences", [re.compile(r"\bsocial science|sociology|anthropology|political science|economics", re.I)]),
+    ("technology_education_industrial_arts", [re.compile(r"\btechnology education|industrial arts|career and technical education", re.I)]),
+    ("theology_and_religious_vocations", [re.compile(r"\btheology|ministry|religious vocation|divinity", re.I)]),
+    ("transportation_and_materials_moving", [re.compile(r"\btransportation|logistics|aviation|materials moving", re.I)]),
+    ("visual_and_performing_arts", [re.compile(r"\bvisual arts?|performing arts?|music|dance|theater|film", re.I)]),
+]
+
+
+CITIZENSHIP_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
+    (
+        "us_citizen",
+        [
+            re.compile(r"\bu\.?s\.?\s*citizen(s)?\b", re.I),
+            re.compile(r"\bunited states citizen(s)?\b", re.I),
+            re.compile(r"\bus citizens? only\b", re.I),
+        ],
+    ),
+    (
+        "us_permanent_resident",
+        [
+            re.compile(r"\bpermanent resident(s)?\b", re.I),
+            re.compile(r"\bgreen card holder(s)?\b", re.I),
+            re.compile(r"\blawful permanent resident(s)?\b", re.I),
+        ],
+    ),
+    (
+        "international_student",
+        [
+            re.compile(r"\binternational student(s)?\b", re.I),
+            re.compile(r"\bnon[-\s]?u\.?s\.?\s*citizen(s)?\b", re.I),
+            re.compile(r"\bf[-\s]?1 visa\b", re.I),
+            re.compile(r"\bstudy permit\b", re.I),
+        ],
+    ),
+]
+
+
+def _derive_by_rules(
+    record: dict[str, Any],
+    rules: list[tuple[str, list[re.Pattern[str]]]],
+    *,
+    blob: str | None = None,
+    fallback_other_slug: str | None = None,
+) -> list[str]:
+    candidates = _extract_candidate_tokens(record)
+    text = blob if blob is not None else build_taxonomy_blob(record)
+    candidates.append(text)
+
+    found: list[str] = []
+    for slug, patterns in rules:
+        for token in candidates:
+            if any(p.search(token) for p in patterns):
+                _append_unique(found, slug)
+                break
+
+    if not found and fallback_other_slug:
+        raw_values = _flatten_text_values(record.get("field_of_study"))
+        if raw_values:
+            _append_unique(found, fallback_other_slug)
+    return found
+
+
+def derive_structured_study_levels(record: dict[str, Any], blob: str | None = None) -> list[str]:
+    return _derive_by_rules(record, SCHOOL_LEVEL_RULES, blob=blob)
+
+
+def derive_structured_field_of_study(record: dict[str, Any], blob: str | None = None) -> list[str]:
+    return _derive_by_rules(
+        record,
+        FIELD_OF_STUDY_RULES,
+        blob=blob,
+        fallback_other_slug="not_listed_other",
+    )
+
+
+def derive_structured_citizenship_statuses(record: dict[str, Any], blob: str | None = None) -> list[str]:
+    return _derive_by_rules(record, CITIZENSHIP_RULES, blob=blob)
+
+
+CANONICAL_STUDY_LEVEL_SLUGS: frozenset[str] = frozenset(
+    {
+        "high_school_freshman",
+        "high_school_sophomore",
+        "high_school_junior",
+        "high_school_senior",
+        "college_1",
+        "college_2",
+        "college_3",
+        "college_4",
+        "graduate_student",
+        "adult_non_traditional",
+    }
+)
+
+CANONICAL_FIELD_OF_STUDY_SLUGS: frozenset[str] = frozenset(
+    {
+        "agriculture_and_related_sciences",
+        "architecture_and_related_services",
+        "area_ethnic_cultural_and_gender_studies",
+        "biological_and_biomedical_sciences",
+        "business_management_and_marketing",
+        "communication_and_journalism",
+        "computer_and_information_sciences",
+        "construction_trades",
+        "education",
+        "engineering",
+        "english_language_and_literature",
+        "family_and_consumer_sciences",
+        "foreign_languages_literature_and_linguistics",
+        "health_professions_and_clinical_sciences",
+        "history",
+        "legal_professions_and_law_studies",
+        "liberal_arts_general_studies",
+        "library_science",
+        "mathematics_and_statistics",
+        "mechanic_and_repair_tech_technicians",
+        "military_technologies",
+        "multi_interdisciplinary_studies",
+        "natural_resources_and_conservation",
+        "parks_recreation_and_fitness_studies",
+        "personal_and_culinary_services",
+        "philosophy_and_religious_studies",
+        "physical_sciences",
+        "precision_production",
+        "psychology",
+        "public_administration_and_social_service",
+        "security_and_protective_services",
+        "social_sciences",
+        "technology_education_industrial_arts",
+        "theology_and_religious_vocations",
+        "transportation_and_materials_moving",
+        "visual_and_performing_arts",
+        "not_listed_other",
+    }
+)
+
+CANONICAL_CITIZENSHIP_SLUGS: frozenset[str] = frozenset(
+    {
+        "us_citizen",
+        "us_permanent_resident",
+        "international_student",
+    }
+)
+
+
+def keep_only_canonical_slugs(values: Any, allowed: frozenset[str]) -> tuple[list[str], list[str]]:
+    """
+    Возвращает (kept, dropped):
+      kept   — lowercased уникальные токены, входящие в allowed;
+      dropped — lowercased уникальные токены, не входящие в allowed.
+    """
+    kept: list[str] = []
+    dropped: list[str] = []
+    seen_kept: set[str] = set()
+    seen_dropped: set[str] = set()
+    for token in _flatten_text_values(values):
+        if token in allowed:
+            if token not in seen_kept:
+                seen_kept.add(token)
+                kept.append(token)
+        else:
+            if token not in seen_dropped:
+                seen_dropped.add(token)
+                dropped.append(token)
+    return kept, dropped
