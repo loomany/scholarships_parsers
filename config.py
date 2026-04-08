@@ -157,6 +157,7 @@ class BigFutureConfig:
     ai_max_input_chars: int
     keyword: str
     headless: bool
+    force_http: bool
     timeout_ms: int
 
     @classmethod
@@ -173,13 +174,14 @@ class BigFutureConfig:
             deep_max_items=max(0, get_int("BIGFUTURE_DEEP_MAX_ITEMS", 0)),
             min_amount_hint=max(0, get_int("BIGFUTURE_MIN_AMOUNT_HINT", 500)),
             prefilter_store_path=get_str("BIGFUTURE_PREFILTER_STORE_PATH", ""),
-            recheck_reject_days=max(0, get_int("BIGFUTURE_RECHECK_REJECT_DAYS", 30)),
+            recheck_reject_days=max(0, get_int("BIGFUTURE_RECHECK_REJECT_DAYS", 1)),
             deep_include_review=get_bool("BIGFUTURE_DEEP_INCLUDE_REVIEW", True),
             ai_enabled=get_bool("BIGFUTURE_AI_ENRICH_ENABLED", False),
             ai_model=get_str("BIGFUTURE_AI_MODEL", "gpt-4o-mini") or "gpt-4o-mini",
             ai_max_input_chars=max(2048, get_int("BIGFUTURE_AI_MAX_INPUT_CHARS", 24_000)),
             keyword=get_str("BIGFUTURE_KEYWORD", ""),
             headless=get_bool("BIGFUTURE_HEADLESS", True),
+            force_http=get_bool("BIGFUTURE_FORCE_HTTP", False),
             timeout_ms=get_int("BIGFUTURE_TIMEOUT_MS", 120_000),
         )
 
@@ -315,7 +317,7 @@ def print_parser_config_summary(resolved_keys: list[str] | None = None) -> None:
     )
     print(
         f"║  MAX_RECORDS_DEBUG={bf.max_records_debug} (0=no cap)  DETAIL_FETCH={bf.detail_fetch}  "
-        f"ACTIVE_ONLY={bf.active_only}  HEADLESS={bf.headless}"
+        f"ACTIVE_ONLY={bf.active_only}  HEADLESS={bf.headless}  FORCE_HTTP={bf.force_http}"
     )
     print(
         f"║  FAST_PREFILTER_ONLY={bf.fast_prefilter_only}  DEEP_PASS_ONLY={bf.deep_pass_only}  "

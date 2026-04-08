@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import os
 import sys
+import traceback
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _BASE_DIR)
@@ -65,6 +66,7 @@ def main() -> None:
             mod.run()
         except Exception as e:
             print(f"Ошибка источника {key}: {e}")
+            traceback.print_exc()
         print(f"========== конец: {key} ==========")
 
     print("")
