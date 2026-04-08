@@ -70,6 +70,11 @@ def main() -> None:
     sleep_hours = _get_sleep_hours()
     sleep_seconds = sleep_hours * 3600
 
+    print(
+        f"{LOG_PREFIX} Booted. Target script: {script_to_execute}. Sleep interval: {_format_sleep_duration(sleep_seconds)}.",
+        flush=True,
+    )
+
     while True:
         print(f"{LOG_PREFIX} Starting execution of {script_to_execute}.", flush=True)
 
