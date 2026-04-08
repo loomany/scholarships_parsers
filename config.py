@@ -174,7 +174,7 @@ class BigFutureConfig:
             deep_max_items=max(0, get_int("BIGFUTURE_DEEP_MAX_ITEMS", 0)),
             min_amount_hint=max(0, get_int("BIGFUTURE_MIN_AMOUNT_HINT", 500)),
             prefilter_store_path=get_str("BIGFUTURE_PREFILTER_STORE_PATH", ""),
-            recheck_reject_days=max(0, get_int("BIGFUTURE_RECHECK_REJECT_DAYS", 30)),
+            recheck_reject_days=max(0, get_int("BIGFUTURE_RECHECK_REJECT_DAYS", 1)),
             deep_include_review=get_bool("BIGFUTURE_DEEP_INCLUDE_REVIEW", True),
             ai_enabled=get_bool("BIGFUTURE_AI_ENRICH_ENABLED", False),
             ai_model=get_str("BIGFUTURE_AI_MODEL", "gpt-4o-mini") or "gpt-4o-mini",

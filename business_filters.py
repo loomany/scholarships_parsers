@@ -6,14 +6,26 @@
 
 from __future__ import annotations
 
+import os
 import re
 from datetime import date, timedelta
 from typing import Any, Literal
 
 DeadlineBiz = Literal["ok", "no_deadline", "expired", "too_close"]
 
+def _get_min_lead_days() -> int:
+    raw = (os.getenv("MIN_LEAD_DAYS", "3") or "3").strip()
+    try:
+        v = int(raw)
+    except ValueError:
+        v = 3
+    return max(0, v)
+
+
 # Дедлайн должен быть не раньше (сегодня + N календарных дней).
-MIN_LEAD_DAYS_BEFORE_DEADLINE = 3
+MIN_LEAD_DAYS = _get_min_lead_days()
+# Backward-compatible alias (импортируется в parser'ах).
+MIN_LEAD_DAYS_BEFORE_DEADLINE = MIN_LEAD_DAYS
 
 _FUNDING_VOID = re.compile(
     r"^\s*(n/?a|tbd|none|—|-|not\s+specified)\s*$",
@@ -37,7 +49,7 @@ def _coerce_deadline_to_date(deadline_date: Any) -> date | None:
 
 def classify_business_deadline(deadline_date: Any) -> DeadlineBiz:
     """
-    ok — дата есть и >= today + MIN_LEAD_DAYS_BEFORE_DEADLINE.
+    ok — дата есть и >= today + MIN_LEAD_DAYS.
     no_deadline — нет или не распарсилась.
     expired — строго до сегодня.
     too_close — сегодня .. today+N-1 включительно.
@@ -48,7 +60,7 @@ def classify_business_deadline(deadline_date: Any) -> DeadlineBiz:
     today = date.today()
     if d < today:
         return "expired"
-    earliest_ok = today + timedelta(days=MIN_LEAD_DAYS_BEFORE_DEADLINE)
+    earliest_ok = today + timedelta(days=MIN_LEAD_DAYS)
     if d < earliest_ok:
         return "too_close"
     return "ok"
