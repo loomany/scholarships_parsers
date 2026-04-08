@@ -16,6 +16,25 @@
 - `sources/shared_scholarship_ai.py` — **единый финальный AI-слой** перед записью (внутри `utils.upsert_scholarship`), см. `docs/SCHOLARSHIP_AI_FINALIZATION.md`.
 - `docs/NEW_PARSER_TEMPLATE.md` — контракт для новых источников.
 
+### Repeater (циклический запуск)
+
+Для сценария «выкатил статью → через минуту пересобрал опубликованные статьи → подождал 2 часа → повторил»
+используйте `repeater.py`:
+
+- `REPEATER_SLEEP_HOURS` — пауза между циклами (по умолчанию `2` часа).
+- `REPEATER_POST_COMMAND` — команда, которая запускается после основного скрипта и завершается перед сном.
+- `REPEATER_POST_COMMAND_DELAY_SECONDS` — задержка перед `REPEATER_POST_COMMAND` (по умолчанию `60` секунд).
+
+Пример:
+
+```bash
+export EXECUTE_SCRIPT=run_all.py
+export REPEATER_SLEEP_HOURS=2
+export REPEATER_POST_COMMAND='npm run content:reprocess-articles -- --all-published'
+export REPEATER_POST_COMMAND_DELAY_SECONDS=60
+python repeater.py
+```
+
 ### AI finalization
 
 После применения миграции `supabase/migrations/20260331120000_scholarship_ai_finalization.sql` можно включить `SCHOLARSHIP_AI_FINAL_ENABLED=1` и задать `OPENAI_API_KEY`. Рабочие переменные только в **корневом** `.env`.
