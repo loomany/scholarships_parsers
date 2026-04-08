@@ -44,6 +44,13 @@ def _format_next_run(sleep_seconds: float) -> str:
     return next_run.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
+def _format_sleep_duration(sleep_seconds: float) -> str:
+    hours = sleep_seconds / 3600
+    if hours.is_integer():
+        return f"{int(hours)}h"
+    return f"{hours:.2f}h"
+
+
 def _cleanup() -> None:
     gc.collect()
 
@@ -79,6 +86,10 @@ def main() -> None:
             _cleanup()
             next_run_str = _format_next_run(sleep_seconds)
             print(f"{LOG_PREFIX} Execution finished. Next run at {next_run_str}.", flush=True)
+            print(
+                f"{LOG_PREFIX} Repeater is active. Sleeping for {_format_sleep_duration(sleep_seconds)}.",
+                flush=True,
+            )
             time.sleep(sleep_seconds)
 
 
