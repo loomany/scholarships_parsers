@@ -30,7 +30,6 @@ from typing import Any, NamedTuple
 
 import requests
 from bs4 import BeautifulSoup
-from playwright.sync_api import Page, Playwright, sync_playwright
 
 _PARSER_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -94,6 +93,7 @@ _gc = get_global_config()
 _bfc = get_bigfuture_config()
 BIGFUTURE_ENABLED = _bfc.enabled
 BIGFUTURE_HEADLESS = _bfc.headless
+BIGFUTURE_FORCE_HTTP = _bfc.force_http
 BIGFUTURE_TIMEOUT_MS = _bfc.timeout_ms
 BIGFUTURE_MAX_RECORDS_DEBUG = _bfc.max_records_debug
 BIGFUTURE_DETAIL_FETCH = _bfc.detail_fetch
@@ -322,6 +322,16 @@ _LIST_INCLUDE_FIELDS: list[str] = [
 _pw_holder: dict[str, Any] = {}
 _list_http_holder: dict[str, Any] = {}
 
+_DETAIL_HEADERS = {
+    "user-agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+    ),
+    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "accept-language": "en-US,en;q=0.9",
+    "referer": SEARCH_URL,
+}
+
 
 def _list_post_body(from_offset: int) -> dict[str, Any]:
     """
@@ -403,7 +413,9 @@ def _main_inner_html(soup: BeautifulSoup, page_url: str) -> str | None:
     return html or None
 
 
-def _start_playwright() -> tuple[Playwright, Any, Page]:
+def _start_playwright() -> tuple[Any, Any, Any]:
+    from playwright.sync_api import sync_playwright
+
     pw = sync_playwright().start()
     browser = pw.chromium.launch(headless=BIGFUTURE_HEADLESS)
     page = browser.new_page()
@@ -433,7 +445,7 @@ def _close_playwright() -> None:
     _pw_holder.clear()
 
 
-def _ensure_page() -> Page:
+def _ensure_page() -> Any:
     if _pw_holder.get("page"):
         return _pw_holder["page"]
     pw, browser, page = _start_playwright()
@@ -484,23 +496,63 @@ def _bootstrap_list_http_session(sess: requests.Session) -> None:
 
 def _post_scholarships_list(body: dict[str, Any]) -> dict[str, Any]:
     sess = _ensure_list_http_session()
-    _bootstrap_list_http_session(sess)
-    r = sess.post(SCHOLARSHIPS_API, json=body, timeout=BIGFUTURE_TIMEOUT_MS / 1000)
-    if r.status_code >= 400:
-        return {
-            "_parseError": True,
-            "status": r.status_code,
-            "text": (r.text or "")[:2000],
-        }
-    try:
-        payload = r.json()
-    except Exception:
-        return {
-            "_parseError": True,
-            "status": r.status_code,
-            "text": (r.text or "")[:2000],
-        }
-    return payload if isinstance(payload, dict) else {"data": payload}
+    attempts = 3
+    last_err: dict[str, Any] | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            _bootstrap_list_http_session(sess)
+            r = sess.post(
+                SCHOLARSHIPS_API,
+                json=body,
+                timeout=BIGFUTURE_TIMEOUT_MS / 1000,
+            )
+            if r.status_code >= 400:
+                txt = (r.text or "")[:2000]
+                err_kind = "http_error"
+                if r.status_code in (401, 403):
+                    err_kind = "auth_or_bot_block"
+                elif r.status_code in (429,):
+                    err_kind = "rate_limit"
+                last_err = {
+                    "_parseError": True,
+                    "kind": err_kind,
+                    "attempt": attempt,
+                    "status": r.status_code,
+                    "text": txt,
+                }
+                if attempt < attempts:
+                    time.sleep(0.8 * attempt)
+                    continue
+                return last_err
+            try:
+                payload = r.json()
+            except Exception:
+                txt = (r.text or "")[:2000]
+                last_err = {
+                    "_parseError": True,
+                    "kind": "non_json_response",
+                    "attempt": attempt,
+                    "status": r.status_code,
+                    "text": txt,
+                }
+                if attempt < attempts:
+                    time.sleep(0.6 * attempt)
+                    continue
+                return last_err
+            return payload if isinstance(payload, dict) else {"data": payload}
+        except Exception as e:
+            last_err = {
+                "_parseError": True,
+                "kind": "request_exception",
+                "attempt": attempt,
+                "status": None,
+                "text": f"{type(e).__name__}: {e}",
+            }
+            if attempt < attempts:
+                time.sleep(0.8 * attempt)
+                continue
+            return last_err
+    return last_err or {"_parseError": True, "kind": "unknown"}
 
 
 class BigFutureListPageResult(NamedTuple):
@@ -633,46 +685,84 @@ def parse_list_item(card: dict[str, Any]) -> dict[str, Any]:
 
 
 def fetch_detail_html(url: str) -> dict[str, Any]:
+    def _blocked_html(text: str) -> bool:
+        t = (text or "").lower()
+        if not t:
+            return True
+        marks = (
+            "cloudflare",
+            "captcha",
+            "attention required",
+            "access denied",
+            "/cdn-cgi/challenge-platform/",
+        )
+        return any(m in t for m in marks)
+
+    def _parse_detail_html(html: str) -> dict[str, Any]:
+        soup = BeautifulSoup(html, "html.parser")
+        next_data = _extract_next_data_props(html)
+        full_content_html = _main_inner_html(soup, url)
+
+        parts: list[str] = []
+        if isinstance(next_data, dict):
+            ap = (next_data.get("aboutPara") or "").strip()
+            if ap:
+                parts.append(ap)
+            elig = next_data.get("eligibilityCriteriaDescriptions")
+            if isinstance(elig, list):
+                parts.extend(str(x).strip() for x in elig if str(x).strip())
+        full_text = " ".join(parts).strip() or (soup.get_text(" ", strip=True) or "").strip()
+
+        if _blocked_html(html):
+            raise RuntimeError("detail html looks blocked by anti-bot/captcha")
+        if not next_data and len(full_text) < 120:
+            raise RuntimeError("detail html too thin (missing __NEXT_DATA__)")
+
+        return {
+            "full_text": full_text,
+            "_sections": {},
+            "page_url": url,
+            "_apply_url_resolved": (
+                str(next_data.get("applicationUrl")).strip()
+                if isinstance(next_data, dict) and next_data.get("applicationUrl")
+                else url
+            ),
+            "_provider_name_guess": (
+                next_data.get("programOrgName")
+                if isinstance(next_data, dict)
+                else None
+            ),
+            "_extracted_deadline_text": (
+                str(next_data.get("scholarshipDeadline")).strip()
+                if isinstance(next_data, dict) and next_data.get("scholarshipDeadline")
+                else None
+            ),
+            "_next_detail": next_data,
+            "_raw_detail_html": html,
+            "_full_content_html": full_content_html,
+        }
+
+    def _fetch_http() -> dict[str, Any]:
+        r = requests.get(
+            url,
+            headers=_DETAIL_HEADERS,
+            timeout=max(30, BIGFUTURE_TIMEOUT_MS / 1000),
+        )
+        r.raise_for_status()
+        return _parse_detail_html(r.text or "")
+
+    if BIGFUTURE_FORCE_HTTP:
+        return _fetch_http()
+
+    try:
+        return _fetch_http()
+    except Exception as e:
+        print(f"  detail http fallback -> playwright: {type(e).__name__}: {e}")
+
     page = _ensure_page()
     page.goto(url, wait_until="networkidle", timeout=BIGFUTURE_TIMEOUT_MS)
     html = page.content()
-    soup = BeautifulSoup(html, "html.parser")
-    next_data = _extract_next_data_props(html)
-    full_content_html = _main_inner_html(soup, url)
-
-    parts: list[str] = []
-    if isinstance(next_data, dict):
-        ap = (next_data.get("aboutPara") or "").strip()
-        if ap:
-            parts.append(ap)
-        elig = next_data.get("eligibilityCriteriaDescriptions")
-        if isinstance(elig, list):
-            parts.extend(str(x).strip() for x in elig if str(x).strip())
-    full_text = " ".join(parts).strip() or (soup.get_text(" ", strip=True) or "").strip()
-
-    return {
-        "full_text": full_text,
-        "_sections": {},
-        "page_url": url,
-        "_apply_url_resolved": (
-            str(next_data.get("applicationUrl")).strip()
-            if isinstance(next_data, dict) and next_data.get("applicationUrl")
-            else url
-        ),
-        "_provider_name_guess": (
-            next_data.get("programOrgName")
-            if isinstance(next_data, dict)
-            else None
-        ),
-        "_extracted_deadline_text": (
-            str(next_data.get("scholarshipDeadline")).strip()
-            if isinstance(next_data, dict) and next_data.get("scholarshipDeadline")
-            else None
-        ),
-        "_next_detail": next_data,
-        "_raw_detail_html": html,
-        "_full_content_html": full_content_html,
-    }
+    return _parse_detail_html(html)
 
 
 def _combined_filter_blob(
@@ -1574,6 +1664,7 @@ def run() -> None:
         f"MAX_LIST_PAGES={MAX_LIST_PAGES}, LIST_PAGE_CAP={list_page_cap}, "
         f"NO_NEW_PAGES_STOP={NO_NEW_PAGES_STOP}, "
         f"DETAIL_FETCH={BIGFUTURE_DETAIL_FETCH}, ACTIVE_ONLY={BIGFUTURE_ACTIVE_ONLY}, "
+        f"FORCE_HTTP={BIGFUTURE_FORCE_HTTP}, "
         f"KEYWORD_FILTERS={queries!r}, "
         f"AI_ENRICH={bigfuture_ai_enrich_enabled()}, "
         f"AUTO_PIPELINE={bf.auto_pipeline}, "
@@ -1614,7 +1705,6 @@ def run() -> None:
             session_deep_queue: list[tuple[dict[str, Any], str]] = []
 
             if bf.deep_pass_only:
-                _ensure_page()
                 candidates = list(
                     store.iter_deep_candidates(
                         recheck_reject_days=bf.recheck_reject_days,
