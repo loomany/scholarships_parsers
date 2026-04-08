@@ -147,7 +147,11 @@ def main() -> None:
                 f"{LOG_PREFIX} Repeater is active. Sleeping for {_format_sleep_duration(sleep_seconds)}.",
                 flush=True,
             )
-            time.sleep(sleep_seconds)
+            print(
+                f"{LOG_PREFIX} Парсер завершен. Вернусь через {sleep_hours:g} часа(ов).",
+                flush=True,
+            )
+            _sleep_with_heartbeat(sleep_seconds)
 
 
 if __name__ == "__main__":
