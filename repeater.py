@@ -65,6 +65,20 @@ def _cleanup() -> None:
         print(f"{LOG_PREFIX} Cleanup command failed: {exc}", flush=True)
 
 
+def _sleep_with_heartbeat(sleep_seconds: float) -> None:
+    remaining = int(sleep_seconds)
+    heartbeat_seconds = int(os.getenv("REPEATER_HEARTBEAT_SECONDS", "300"))
+    if heartbeat_seconds <= 0:
+        heartbeat_seconds = 300
+
+    while remaining > 0:
+        chunk = min(heartbeat_seconds, remaining)
+        time.sleep(chunk)
+        remaining -= chunk
+        if remaining > 0:
+            print(f"{LOG_PREFIX} Waiting... {remaining}s remaining until next run.", flush=True)
+
+
 def main() -> None:
     script_to_execute = os.getenv("EXECUTE_SCRIPT", DEFAULT_SCRIPT).strip() or DEFAULT_SCRIPT
     sleep_hours = _get_sleep_hours()
@@ -95,7 +109,11 @@ def main() -> None:
                 f"{LOG_PREFIX} Repeater is active. Sleeping for {_format_sleep_duration(sleep_seconds)}.",
                 flush=True,
             )
-            time.sleep(sleep_seconds)
+            print(
+                f"{LOG_PREFIX} Парсер завершен. Вернусь через {sleep_hours:g} часа(ов).",
+                flush=True,
+            )
+            _sleep_with_heartbeat(sleep_seconds)
 
 
 if __name__ == "__main__":
