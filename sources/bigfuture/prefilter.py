@@ -143,8 +143,8 @@ def classify_fast_prefilter(
             pass  # treat as enough signal to not reject funding
         else:
             return (
-                PREFILTER_REJECT_FUNDING,
-                "no_amount_hint",
+                PREFILTER_REVIEW,
+                "no_amount_hint_review",
                 amount_hint,
                 close_s,
             )

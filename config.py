@@ -157,6 +157,7 @@ class BigFutureConfig:
     ai_max_input_chars: int
     keyword: str
     headless: bool
+    force_http: bool
     timeout_ms: int
 
     @classmethod
@@ -180,6 +181,7 @@ class BigFutureConfig:
             ai_max_input_chars=max(2048, get_int("BIGFUTURE_AI_MAX_INPUT_CHARS", 24_000)),
             keyword=get_str("BIGFUTURE_KEYWORD", ""),
             headless=get_bool("BIGFUTURE_HEADLESS", True),
+            force_http=get_bool("BIGFUTURE_FORCE_HTTP", False),
             timeout_ms=get_int("BIGFUTURE_TIMEOUT_MS", 120_000),
         )
 
@@ -315,7 +317,7 @@ def print_parser_config_summary(resolved_keys: list[str] | None = None) -> None:
     )
     print(
         f"║  MAX_RECORDS_DEBUG={bf.max_records_debug} (0=no cap)  DETAIL_FETCH={bf.detail_fetch}  "
-        f"ACTIVE_ONLY={bf.active_only}  HEADLESS={bf.headless}"
+        f"ACTIVE_ONLY={bf.active_only}  HEADLESS={bf.headless}  FORCE_HTTP={bf.force_http}"
     )
     print(
         f"║  FAST_PREFILTER_ONLY={bf.fast_prefilter_only}  DEEP_PASS_ONLY={bf.deep_pass_only}  "
