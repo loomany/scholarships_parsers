@@ -484,23 +484,63 @@ def _bootstrap_list_http_session(sess: requests.Session) -> None:
 
 def _post_scholarships_list(body: dict[str, Any]) -> dict[str, Any]:
     sess = _ensure_list_http_session()
-    _bootstrap_list_http_session(sess)
-    r = sess.post(SCHOLARSHIPS_API, json=body, timeout=BIGFUTURE_TIMEOUT_MS / 1000)
-    if r.status_code >= 400:
-        return {
-            "_parseError": True,
-            "status": r.status_code,
-            "text": (r.text or "")[:2000],
-        }
-    try:
-        payload = r.json()
-    except Exception:
-        return {
-            "_parseError": True,
-            "status": r.status_code,
-            "text": (r.text or "")[:2000],
-        }
-    return payload if isinstance(payload, dict) else {"data": payload}
+    attempts = 3
+    last_err: dict[str, Any] | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            _bootstrap_list_http_session(sess)
+            r = sess.post(
+                SCHOLARSHIPS_API,
+                json=body,
+                timeout=BIGFUTURE_TIMEOUT_MS / 1000,
+            )
+            if r.status_code >= 400:
+                txt = (r.text or "")[:2000]
+                err_kind = "http_error"
+                if r.status_code in (401, 403):
+                    err_kind = "auth_or_bot_block"
+                elif r.status_code in (429,):
+                    err_kind = "rate_limit"
+                last_err = {
+                    "_parseError": True,
+                    "kind": err_kind,
+                    "attempt": attempt,
+                    "status": r.status_code,
+                    "text": txt,
+                }
+                if attempt < attempts:
+                    time.sleep(0.8 * attempt)
+                    continue
+                return last_err
+            try:
+                payload = r.json()
+            except Exception:
+                txt = (r.text or "")[:2000]
+                last_err = {
+                    "_parseError": True,
+                    "kind": "non_json_response",
+                    "attempt": attempt,
+                    "status": r.status_code,
+                    "text": txt,
+                }
+                if attempt < attempts:
+                    time.sleep(0.6 * attempt)
+                    continue
+                return last_err
+            return payload if isinstance(payload, dict) else {"data": payload}
+        except Exception as e:
+            last_err = {
+                "_parseError": True,
+                "kind": "request_exception",
+                "attempt": attempt,
+                "status": None,
+                "text": f"{type(e).__name__}: {e}",
+            }
+            if attempt < attempts:
+                time.sleep(0.8 * attempt)
+                continue
+            return last_err
+    return last_err or {"_parseError": True, "kind": "unknown"}
 
 
 class BigFutureListPageResult(NamedTuple):
