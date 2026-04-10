@@ -44,6 +44,14 @@ from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup, Tag
 
+from ai_monitoring import (
+    print_ai_session_summary,
+    record_ai_completion,
+    record_ai_error,
+    record_ai_skip,
+    snapshot_ai_usage,
+)
+
 _PARSER_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
@@ -407,7 +415,7 @@ def simpler_ai_enrich_enabled() -> bool:
 
 
 def simpler_ai_model() -> str:
-    return get_simpler_config().ai_model
+    return "gpt-4o-mini"
 
 
 def simpler_ai_max_input_chars() -> int:
@@ -528,6 +536,7 @@ def ai_enrich_simpler_grant(record: dict[str, Any] | None) -> dict[str, Any]:
                 {"role": "user", "content": user_prompt},
             ],
         )
+        record_ai_completion(completion.usage)
         text = (completion.choices[0].message.content or "").strip()
         if not text:
             return empty
@@ -536,6 +545,7 @@ def ai_enrich_simpler_grant(record: dict[str, Any] | None) -> dict[str, Any]:
             return empty
         return normalize_ai_enrichment_parsed(parsed)
     except Exception:
+        record_ai_error()
         return empty
 
 
@@ -1656,6 +1666,7 @@ def _log_simpler_skip_no_parsed_deadline_debug(
 
 
 def run() -> None:
+    ai_usage_start = snapshot_ai_usage()
     stats: dict[str, int] = {
         "list_rows_seen": 0,
         "known_skipped": 0,
@@ -1694,7 +1705,8 @@ def run() -> None:
         f"list_filters={_LIST_FILTER_PARAMS!r}, "
         f"list_keyword_param={_LIST_KEYWORD_QUERY_PARAM!r}, "
         f"SIMPLER_INCLUDE_EXTENDED_SEARCH={get_simpler_config().include_extended_search}, "
-        f"SIMPLER_DETAIL_FETCH={SIMPLER_DETAIL_FETCH})"
+        f"SIMPLER_DETAIL_FETCH={SIMPLER_DETAIL_FETCH})",
+        flush=True,
     )
 
     idx: KnownScholarshipIndex
@@ -1704,10 +1716,14 @@ def run() -> None:
             print(
                 f"  known index: {len(idx.urls)} urls, {len(idx.source_ids)} source_ids, "
                 f"{len(idx.slugs_lc)} slugs, {len(idx.titles_norm)} titles "
-                f"(USE_TITLE_FALLBACK_KNOWN={USE_TITLE_FALLBACK_KNOWN})"
+                f"(USE_TITLE_FALLBACK_KNOWN={USE_TITLE_FALLBACK_KNOWN})",
+                flush=True,
             )
         except Exception as e:
-            print(f"  warning: could not load known index ({e}); continuing without skip")
+            print(
+                f"  warning: could not load known index ({e}); continuing without skip",
+                flush=True,
+            )
             idx = KnownScholarshipIndex()
     else:
         idx = KnownScholarshipIndex()
@@ -1767,6 +1783,7 @@ def run() -> None:
                 )
                 if known:
                     stats["known_skipped"] += 1
+                    record_ai_skip()
                     print(f"  row: {title[:70]} → known, skip")
                     continue
 
@@ -1935,6 +1952,12 @@ def run() -> None:
     print(f"  citizenship_statuses non-empty: {stats['taxonomy_citizenship_non_empty']}")
     print(f"  all three empty: {stats['taxonomy_all_empty']}")
     print(f"stop reason: {stop_reason}")
+    print_ai_session_summary(
+        SOURCE,
+        processed=stats["list_rows_seen"],
+        new_found=stats["upsert_ok"],
+        start=ai_usage_start,
+    )
 
 
 if __name__ == "__main__":

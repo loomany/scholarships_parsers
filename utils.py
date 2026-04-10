@@ -10,6 +10,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping
+from urllib.parse import urlparse
 
 from supabase import Client, create_client
 
@@ -41,6 +42,30 @@ def _norm_text(value: Any) -> str:
         return ""
     s = str(value).strip().lower()
     return " ".join(s.split())
+
+
+def _clean_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_absolute_url(value: Any) -> str | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    if text.startswith("//"):
+        text = f"https:{text}"
+    parsed = urlparse(text)
+    if parsed.scheme in ("http", "https") and parsed.netloc:
+        return text
+    if not parsed.scheme and "." in parsed.path.split("/", 1)[0]:
+        candidate = f"https://{text.lstrip('/')}"
+        parsed_candidate = urlparse(candidate)
+        if parsed_candidate.scheme in ("http", "https") and parsed_candidate.netloc:
+            return candidate
+    return None
 
 
 def build_text_fingerprint(record: Mapping[str, Any]) -> str:
@@ -181,6 +206,32 @@ def _find_id_by_source_fingerprint(
     return rows[0]["id"] if rows else None
 
 
+def _load_existing_row_by_id(client: Client, row_id: str) -> dict[str, Any] | None:
+    res = client.table("scholarships").select("*").eq("id", row_id).limit(1).execute()
+    rows = res.data or []
+    row = rows[0] if rows else None
+    return row if isinstance(row, dict) else None
+
+
+def _preserve_provider_fields(
+    record: Mapping[str, Any],
+    existing_row: dict[str, Any] | None,
+) -> dict[str, Any]:
+    out = dict(record)
+    provider_url = _normalize_absolute_url(out.get("provider_url"))
+    if provider_url:
+        out["provider_url"] = provider_url
+        return out
+    existing_provider_url = _normalize_absolute_url(
+        existing_row.get("provider_url") if isinstance(existing_row, dict) else None
+    )
+    if existing_provider_url:
+        out["provider_url"] = existing_provider_url
+    else:
+        out["provider_url"] = None
+    return out
+
+
 # Поля, которые нельзя массово передавать в update (id задаётся в .eq)
 _SKIP_ON_WRITE = frozenset({"id"})
 
@@ -200,19 +251,16 @@ def upsert_scholarship(record: Mapping[str, Any]) -> dict[str, Any]:
     if "source" not in record or "url" not in record or "title" not in record:
         raise ValueError("В record обязательны ключи: source, url, title")
 
-    from sources.shared_scholarship_ai import apply_scholarship_ai_finalization_if_enabled
-
-    record = apply_scholarship_ai_finalization_if_enabled(dict(record))
-
     client = get_client()
-    source = str(record["source"]).strip()
-    url = str(record["url"]).strip()
-    fingerprint = build_text_fingerprint(record)
+    prepared = dict(record)
+    source = str(prepared["source"]).strip()
+    url = str(prepared["url"]).strip()
+    fingerprint = build_text_fingerprint(prepared)
 
     row_id: str | None = _find_id_by_source_url(client, source, url)
 
     if row_id is None:
-        sid = record.get("source_id")
+        sid = prepared.get("source_id")
         if sid is not None and str(sid).strip() != "":
             row_id = _find_id_by_source_source_id(
                 client, source, str(sid).strip()
@@ -221,8 +269,21 @@ def upsert_scholarship(record: Mapping[str, Any]) -> dict[str, Any]:
     if row_id is None:
         row_id = _find_id_by_source_fingerprint(client, source, fingerprint)
 
+    existing_row = _load_existing_row_by_id(client, row_id) if row_id is not None else None
+    prepared = _preserve_provider_fields(prepared, existing_row)
+
+    from sources.shared_scholarship_ai import apply_scholarship_ai_finalization_if_enabled
+
+    prepared = apply_scholarship_ai_finalization_if_enabled(
+        prepared,
+        existing_row=existing_row,
+    )
+    source = str(prepared["source"]).strip()
+    url = str(prepared["url"]).strip()
+    fingerprint = build_text_fingerprint(prepared)
+
     now = _now_iso()
-    raw_row = {k: v for k, v in dict(record).items() if k not in _SKIP_ON_WRITE}
+    raw_row = {k: v for k, v in dict(prepared).items() if k not in _SKIP_ON_WRITE}
     unknown = set(raw_row) - SCHOLARSHIP_UPSERT_PAYLOAD_KEYS
     if unknown:
         raise ValueError(

@@ -110,6 +110,7 @@ SCHOLARSHIP_UPSERT_BODY_KEYS: tuple[str, ...] = (
     "who_can_apply",
     "notification_details",
     "payment_details",
+    "document_urls",
     "documents_required",
     "requirements_text_clean",
     "official_source_name",
@@ -139,6 +140,7 @@ SCHOLARSHIP_UPSERT_BODY_KEYS: tuple[str, ...] = (
     "seo_eligibility",
     "seo_application",
     "seo_faq",
+    "ai_content_hash",
     "raw_data",
 )
 

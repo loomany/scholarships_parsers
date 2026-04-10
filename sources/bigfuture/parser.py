@@ -31,6 +31,14 @@ from typing import Any, NamedTuple
 import requests
 from bs4 import BeautifulSoup
 
+from ai_monitoring import (
+    print_ai_session_summary,
+    record_ai_completion,
+    record_ai_error,
+    record_ai_skip,
+    snapshot_ai_usage,
+)
+
 _PARSER_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
@@ -113,7 +121,7 @@ def bigfuture_ai_enrich_enabled() -> bool:
 
 
 def bigfuture_ai_model() -> str:
-    return get_bigfuture_config().ai_model
+    return "gpt-4o-mini"
 
 
 def bigfuture_ai_max_input_chars() -> int:
@@ -264,6 +272,7 @@ def ai_enrich_bigfuture_grant(record: dict[str, Any] | None) -> dict[str, Any]:
                 {"role": "user", "content": user_prompt},
             ],
         )
+        record_ai_completion(completion.usage)
         text = (completion.choices[0].message.content or "").strip()
         if not text:
             return empty
@@ -272,6 +281,7 @@ def ai_enrich_bigfuture_grant(record: dict[str, Any] | None) -> dict[str, Any]:
             return empty
         return normalize_ai_enrichment_parsed(parsed)
     except Exception:
+        record_ai_error()
         return empty
 
 
@@ -1232,6 +1242,7 @@ def _bigfuture_run_list_prefilter_scan(
                 )
                 if known:
                     stats["known_skipped"] += 1
+                    record_ai_skip()
                     print(f"  row: {title[:70]} → known, skip")
                     continue
 
@@ -1336,6 +1347,7 @@ def _run_bigfuture_deep_for_card(
     )
     if known:
         stats["known_skipped"] += 1
+        record_ai_skip()
         print(f"  row: {title[:70]} → known, skip")
         return
 
@@ -1604,6 +1616,7 @@ def _run_bigfuture_auto_pipeline(
 
 
 def run() -> None:
+    ai_usage_start = snapshot_ai_usage()
     bf = get_bigfuture_config()
     if not bf.auto_pipeline and bf.fast_prefilter_only and bf.deep_pass_only:
         print(
@@ -1663,6 +1676,7 @@ def run() -> None:
         f"BIGFUTURE_MAX_RECORDS_DEBUG={cap_dbg} (0=unlimited), "
         f"MAX_LIST_PAGES={MAX_LIST_PAGES}, LIST_PAGE_CAP={list_page_cap}, "
         f"NO_NEW_PAGES_STOP={NO_NEW_PAGES_STOP}, "
+        f"SKIP_EXISTING_ON_LIST={SKIP_EXISTING_ON_LIST}, DISCOVERY_MODE={DISCOVERY_MODE!r}, "
         f"DETAIL_FETCH={BIGFUTURE_DETAIL_FETCH}, ACTIVE_ONLY={BIGFUTURE_ACTIVE_ONLY}, "
         f"FORCE_HTTP={BIGFUTURE_FORCE_HTTP}, "
         f"KEYWORD_FILTERS={queries!r}, "
@@ -1671,7 +1685,8 @@ def run() -> None:
         f"FAST_PREFILTER_ONLY={bf.fast_prefilter_only}, DEEP_PASS_ONLY={bf.deep_pass_only}, "
         f"FAST_MAX_PAGES={bf.fast_max_pages}, DEEP_MAX_ITEMS={bf.deep_max_items}, "
         f"MIN_AMOUNT_HINT={bf.min_amount_hint}, RECHECK_REJECT_D={bf.recheck_reject_days}, "
-        f"PREFILTER_STORE={store_path!r})"
+        f"PREFILTER_STORE={store_path!r})",
+        flush=True,
     )
 
     try:
@@ -1682,10 +1697,14 @@ def run() -> None:
                 print(
                     f"  known index: {len(idx.urls)} urls, {len(idx.source_ids)} source_ids, "
                     f"{len(idx.slugs_lc)} slugs, {len(idx.titles_norm)} titles "
-                    f"(USE_TITLE_FALLBACK_KNOWN={USE_TITLE_FALLBACK_KNOWN})"
+                    f"(USE_TITLE_FALLBACK_KNOWN={USE_TITLE_FALLBACK_KNOWN})",
+                    flush=True,
                 )
             except Exception as e:
-                print(f"  warning: could not load known index ({e}); continuing without skip")
+                print(
+                    f"  warning: could not load known index ({e}); continuing without skip",
+                    flush=True,
+                )
                 idx = KnownScholarshipIndex()
         else:
             idx = KnownScholarshipIndex()
@@ -1786,6 +1805,19 @@ def run() -> None:
                 list_pages_loaded=list_pages_loaded,
                 stop_reason=stop_reason,
                 show_list_requests=not bf.deep_pass_only,
+            )
+            print_ai_session_summary(
+                SOURCE,
+                processed=stats["list_rows_seen"],
+                new_found=stats["upsert_ok"],
+                start=ai_usage_start,
+            )
+        if bf.auto_pipeline:
+            print_ai_session_summary(
+                SOURCE,
+                processed=stats["list_rows_seen"],
+                new_found=stats["upsert_ok"],
+                start=ai_usage_start,
             )
     finally:
         _close_list_http_session()

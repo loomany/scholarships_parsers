@@ -942,7 +942,8 @@ def run() -> None:
         f"SCHOLARSHIP_AMERICA_MAX_RECORDS_DEBUG={cap_dbg} (0=use TARGET only), "
         f"DETAIL_FETCH={SCHOLARSHIP_AMERICA_DETAIL_FETCH}, "
         f"MAX_LIST_PAGES={MAX_LIST_PAGES}, NO_NEW_PAGES_STOP={NO_NEW_PAGES_STOP}, "
-        f"SKIP_EXISTING_ON_LIST={SKIP_EXISTING_ON_LIST}, DISCOVERY_MODE={DISCOVERY_MODE!r})"
+        f"SKIP_EXISTING_ON_LIST={SKIP_EXISTING_ON_LIST}, DISCOVERY_MODE={DISCOVERY_MODE!r})",
+        flush=True,
     )
 
     idx: KnownScholarshipIndex
@@ -952,10 +953,14 @@ def run() -> None:
             print(
                 f"  known index: {len(idx.urls)} urls, {len(idx.source_ids)} source_ids, "
                 f"{len(idx.slugs_lc)} slugs, {len(idx.titles_norm)} titles "
-                f"(USE_TITLE_FALLBACK_KNOWN={USE_TITLE_FALLBACK_KNOWN})"
+                f"(USE_TITLE_FALLBACK_KNOWN={USE_TITLE_FALLBACK_KNOWN})",
+                flush=True,
             )
         except Exception as e:
-            print(f"  warning: could not load known index ({e}); continuing without skip")
+            print(
+                f"  warning: could not load known index ({e}); continuing without skip",
+                flush=True,
+            )
             idx = KnownScholarshipIndex()
     else:
         idx = KnownScholarshipIndex()

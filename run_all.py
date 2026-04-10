@@ -33,6 +33,7 @@ _SOURCE_MODULES: dict[str, tuple[str, str]] = {
     "scholarship_america": ("Scholarship America", "sources.scholarship_america"),
     "simpler_grants_gov": ("Simpler.Grants.gov", "sources.simpler_grants_gov"),
     "bigfuture": ("BigFuture (College Board)", "sources.bigfuture"),
+    "bold_org": ("Bold.org", "sources.bold_org"),
 }
 # Каждый ключ — пакет с __init__.py, экспортирующим run (см. sources/<key>/parser.py).
 

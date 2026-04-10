@@ -40,12 +40,14 @@ SOURCE_ALIASES: dict[str, str] = {
     "scholarship": "scholarship_america",
     "sa": "scholarship_america",
     "bf": "bigfuture",
+    "bold": "bold_org",
 }
 
 CANONICAL_SOURCE_KEYS: tuple[str, ...] = (
     "scholarship_america",
     "simpler_grants_gov",
     "bigfuture",
+    "bold_org",
 )
 
 
@@ -130,8 +132,8 @@ class SimplerConfig:
             max_records_debug=get_int("SIMPLER_MAX_RECORDS_DEBUG", 30),
             detail_fetch=get_bool("SIMPLER_DETAIL_FETCH", True),
             ai_enabled=get_bool("SIMPLER_AI_ENRICH_ENABLED", False),
-            ai_model=get_str("SIMPLER_AI_MODEL", "gpt-4o-mini") or "gpt-4o-mini",
-            ai_max_input_chars=max(2048, get_int("SIMPLER_AI_MAX_INPUT_CHARS", 24_000)),
+            ai_model="gpt-4o-mini",
+            ai_max_input_chars=max(2048, min(5000, get_int("SIMPLER_AI_MAX_INPUT_CHARS", 4500))),
             keyword="",
             include_extended_search=get_bool("SIMPLER_INCLUDE_EXTENDED_SEARCH", False),
         )
@@ -177,8 +179,8 @@ class BigFutureConfig:
             recheck_reject_days=max(0, get_int("BIGFUTURE_RECHECK_REJECT_DAYS", 1)),
             deep_include_review=get_bool("BIGFUTURE_DEEP_INCLUDE_REVIEW", True),
             ai_enabled=get_bool("BIGFUTURE_AI_ENRICH_ENABLED", False),
-            ai_model=get_str("BIGFUTURE_AI_MODEL", "gpt-4o-mini") or "gpt-4o-mini",
-            ai_max_input_chars=max(2048, get_int("BIGFUTURE_AI_MAX_INPUT_CHARS", 24_000)),
+            ai_model="gpt-4o-mini",
+            ai_max_input_chars=max(2048, min(5000, get_int("BIGFUTURE_AI_MAX_INPUT_CHARS", 4500))),
             keyword=get_str("BIGFUTURE_KEYWORD", ""),
             headless=get_bool("BIGFUTURE_HEADLESS", True),
             force_http=get_bool("BIGFUTURE_FORCE_HTTP", False),
@@ -201,8 +203,8 @@ class ScholarshipsAiFinalConfig:
     def load(cls) -> ScholarshipsAiFinalConfig:
         return cls(
             enabled=get_bool("SCHOLARSHIP_AI_FINAL_ENABLED", False),
-            model=get_str("SCHOLARSHIP_AI_MODEL", "gpt-4o-mini") or "gpt-4o-mini",
-            max_input_chars=max(4096, get_int("SCHOLARSHIP_AI_MAX_INPUT_CHARS", 24_000)),
+            model=get_str("SCHOLARSHIP_AI_MODEL", "gpt-5.4") or "gpt-5.4",
+            max_input_chars=max(4096, min(5000, get_int("SCHOLARSHIP_AI_MAX_INPUT_CHARS", 4500))),
             write_seo=get_bool("SCHOLARSHIP_AI_WRITE_SEO", True),
             write_score_from_model=get_bool("SCHOLARSHIP_AI_WRITE_SCORE", True),
             write_guidance=get_bool("SCHOLARSHIP_AI_WRITE_GUIDANCE", True),
@@ -242,6 +244,8 @@ def source_enabled(canonical_key: str) -> bool:
         return get_simpler_config().enabled
     if canonical_key == "bigfuture":
         return get_bigfuture_config().enabled
+    if canonical_key == "bold_org":
+        return get_bool("BOLD_ORG_ENABLED", True)
     return True
 
 

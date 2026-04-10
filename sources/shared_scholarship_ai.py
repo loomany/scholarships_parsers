@@ -11,12 +11,14 @@ provider, …) модель только интерпретирует; выду�
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from ai_monitoring import record_ai_completion, record_ai_error, record_ai_reuse
 from business_filters import MIN_LEAD_DAYS_BEFORE_DEADLINE
 from config import get_scholarships_ai_final_config
 from sources.shared_ai_enrichment import json_safe
@@ -24,7 +26,7 @@ from sources.shared_ai_enrichment import json_safe
 _JSON_SYSTEM = """You are a scholarship catalog editor helping U.S. students decide whether to apply.
 
 STRICT RULES:
-1) Do NOT invent facts: amounts, deadlines, provider names, eligibility rules, residency, degree level, field of study, application steps, or payout methods must ONLY come from the provided excerpt JSON. If unknown, say so in missing_info or use empty arrays — never fabricate.
+1) Do NOT invent facts: amounts, deadlines, provider names, eligibility rules, residency, degree level, field of study, application steps, essay requirements, or payout methods must ONLY come from the provided excerpt JSON. If unknown, say so in missing_info or use empty arrays — never fabricate.
 2) Separate FACTS (tied to excerpt) from GUIDANCE (practical advice). Guidance arrays (application_tips, why_apply, important_checks) are labeled as advice — they must still be reasonable and generic when specifics are missing, and must NOT assert unverified facts.
 3) Tone: clear, student-friendly, concise. Prefer short bullets. No fluff.
 4) If data is thin: state that clearly; strengthen the card with honest missing_info, red_flags, and what to verify on the official site.
@@ -34,6 +36,7 @@ STRICT RULES:
 8) ai_match_band: low (<45), medium (45-69), high (>=70) — must match ai_match_score.
 9) confidence_score: 0.0-1.0 how well the excerpt supports your outputs.
 10) seo_faq: 2-5 items; each answer must only use facts present in excerpt or honestly say the listing does not state X.
+11) The excerpt may contain long-form content in description_html and detailed requirements/essay prompts in requirements_text or raw_data_preview. Use them. If an essay prompt or word-count guidance is present, summarize the essay theme in eligibility_summary or important_checks and include practical application_tips tied to that prompt without inventing extra requirements.
 
 Return a single JSON object with exactly these keys (arrays may be empty):
 {
@@ -65,6 +68,30 @@ def _s(v: Any) -> str:
     if v is None:
         return ""
     return str(v).strip()
+
+
+_AI_REUSE_FIELDS: tuple[str, ...] = (
+    "ai_student_summary",
+    "ai_best_for",
+    "ai_key_highlights",
+    "ai_eligibility_summary",
+    "ai_important_checks",
+    "ai_application_tips",
+    "ai_why_apply",
+    "ai_red_flags",
+    "ai_missing_info",
+    "ai_urgency_level",
+    "ai_difficulty_level",
+    "ai_match_score",
+    "ai_match_band",
+    "ai_score_explanation",
+    "ai_confidence_score",
+    "seo_excerpt",
+    "seo_overview",
+    "seo_eligibility",
+    "seo_application",
+    "seo_faq",
+)
 
 
 def _coerce_str_list(val: Any) -> list[str]:
@@ -284,6 +311,7 @@ def _build_excerpt_payload(record: dict[str, Any], max_chars: int) -> dict[str, 
         "title": record.get("title"),
         "provider_name": record.get("provider_name"),
         "provider_url": record.get("provider_url"),
+        "provider_mission": record.get("provider_mission"),
         "url": record.get("url"),
         "apply_url": record.get("apply_url"),
         "award_amount_text": record.get("award_amount_text"),
@@ -293,6 +321,7 @@ def _build_excerpt_payload(record: dict[str, Any], max_chars: int) -> dict[str, 
         "deadline_date": record.get("deadline_date"),
         "currency": record.get("currency"),
         "description": record.get("description"),
+        "description_html": record.get("description_html"),
         "eligibility_text": record.get("eligibility_text"),
         "requirements_text": record.get("requirements_text"),
         "requirements_count": record.get("requirements_count"),
@@ -304,6 +333,10 @@ def _build_excerpt_payload(record: dict[str, Any], max_chars: int) -> dict[str, 
         "state_territory_text": record.get("state_territory_text"),
         "application_status_text": record.get("application_status_text"),
         "category": record.get("category"),
+        "tags": record.get("tags"),
+        "study_levels": record.get("study_levels"),
+        "number_of_awards": record.get("number_of_awards"),
+        "applicants_count": record.get("applicants_count"),
         "summary_short": record.get("summary_short"),
         "summary_long": record.get("summary_long"),
         "who_can_apply": record.get("who_can_apply"),
@@ -311,6 +344,7 @@ def _build_excerpt_payload(record: dict[str, Any], max_chars: int) -> dict[str, 
     }
     long_keys = (
         "description",
+        "description_html",
         "eligibility_text",
         "requirements_text",
         "summary_long",
@@ -325,12 +359,110 @@ def _build_excerpt_payload(record: dict[str, Any], max_chars: int) -> dict[str, 
             return payload
     return payload
 
+
+def _stable_hashable(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        cleaned = _s(value)
+        return cleaned or None
+    if isinstance(value, (int, float, bool)):
+        return value
+    if isinstance(value, list):
+        out = [_stable_hashable(v) for v in value]
+        return [v for v in out if v not in (None, "", [], {})]
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key in sorted(value.keys()):
+            normalized = _stable_hashable(value.get(key))
+            if normalized in (None, "", [], {}):
+                continue
+            out[str(key)] = normalized
+        return out
+    return _s(value) or None
+
+
+def build_ai_content_hash(record: dict[str, Any]) -> str:
+    """
+    Stable hash for AI Final reuse.
+
+    Intentionally excludes transport / gating fields like apply_url/provider_url so values such as
+    "LOCKED" do not trigger a false re-run. Dedup text_fingerprint in utils stays unchanged.
+    """
+    payload = {
+        "title": record.get("title"),
+        "provider_name": record.get("provider_name"),
+        "award_amount_text": record.get("award_amount_text"),
+        "deadline_text": record.get("deadline_text"),
+        "description": record.get("description"),
+        "description_html": record.get("description_html"),
+        "eligibility_text": record.get("eligibility_text"),
+        "requirements_text": record.get("requirements_text"),
+        "awards_text": record.get("awards_text"),
+        "winner_payment_text": record.get("winner_payment_text"),
+        "payout_method": record.get("payout_method"),
+        "payment_details": record.get("payment_details"),
+        "institutions_text": record.get("institutions_text"),
+        "state_territory_text": record.get("state_territory_text"),
+        "application_status_text": record.get("application_status_text"),
+        "category": record.get("category"),
+        "tags": record.get("tags"),
+        "study_levels": record.get("study_levels"),
+        "number_of_awards": record.get("number_of_awards"),
+        "applicants_count": record.get("applicants_count"),
+        "summary_short": record.get("summary_short"),
+        "summary_long": record.get("summary_long"),
+        "who_can_apply": record.get("who_can_apply"),
+    }
+    stable = _stable_hashable(payload)
+    blob = json.dumps(stable, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.md5(blob.encode("utf-8")).hexdigest()
+
+
+def _existing_ai_content_hash(existing_row: dict[str, Any] | None) -> str | None:
+    if not isinstance(existing_row, dict):
+        return None
+    hash_value = _s(existing_row.get("ai_content_hash"))
+    return hash_value or None
+
+
+def _has_reusable_ai_fields(existing_row: dict[str, Any] | None) -> bool:
+    if not isinstance(existing_row, dict):
+        return False
+    return any(existing_row.get(key) not in (None, "", []) for key in _AI_REUSE_FIELDS)
+
+
+def _copy_ai_fields_from_existing(out: dict[str, Any], existing_row: dict[str, Any]) -> None:
+    for key in _AI_REUSE_FIELDS:
+        if key in existing_row:
+            out[key] = existing_row.get(key)
+
+
+def _reuse_existing_ai_fields(
+    out: dict[str, Any],
+    existing_row: dict[str, Any],
+    ai_content_hash: str,
+) -> dict[str, Any]:
+    _copy_ai_fields_from_existing(out, existing_row)
+    out["ai_content_hash"] = ai_content_hash
+    record_ai_reuse()
+    _merge_raw_finalization(
+        out,
+        {
+            "version": 1,
+            "mode": "reused_existing",
+            "reused_existing_id": existing_row.get("id"),
+        },
+    )
+    return out
+
 def _apply_rule_only_fallback(
     record: dict[str, Any],
     rule_score: int,
     rule_expl: str,
     components: dict[str, Any],
 ) -> None:
+    record["ai_content_hash"] = build_ai_content_hash(record)
     urg = compute_urgency_level(record)
     diff = compute_difficulty_heuristic(record)
     record["ai_urgency_level"] = urg
@@ -379,7 +511,9 @@ def _merge_raw_finalization(record: dict[str, Any], meta: dict[str, Any]) -> Non
         rd = dict(rd)
     prev = rd.get("ai_finalization")
     if isinstance(prev, dict):
+        prev = {k: v for k, v in prev.items() if k != "ai_content_hash"}
         meta = {**prev, **meta}
+    meta = {k: v for k, v in meta.items() if k != "ai_content_hash"}
     rd["ai_finalization"] = json_safe(meta)
     record["raw_data"] = rd
 
@@ -395,7 +529,11 @@ def _parse_model_json(text: str) -> dict[str, Any] | None:
         return None
 
 
-def apply_scholarship_ai_finalization_if_enabled(record: dict[str, Any]) -> dict[str, Any]:
+def apply_scholarship_ai_finalization_if_enabled(
+    record: dict[str, Any],
+    *,
+    existing_row: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
     Если SCHOLARSHIP_AI_FINAL_ENABLED и есть OPENAI_API_KEY — дополняет record полями ai_* / seo_*.
     Иначе возвращает record без изменений (кроме случая отсутствия ключа: без изменений).
@@ -406,6 +544,20 @@ def apply_scholarship_ai_finalization_if_enabled(record: dict[str, Any]) -> dict
         return out
 
     rule_score, rule_expl, components = compute_rule_based_score(out)
+    ai_content_hash = build_ai_content_hash(out)
+    out["ai_content_hash"] = ai_content_hash
+    existing_hash = _existing_ai_content_hash(existing_row)
+    if (
+        existing_hash
+        and existing_hash == ai_content_hash
+        and _has_reusable_ai_fields(existing_row)
+    ):
+        print(
+            "[scholarship_ai_final] unchanged content; reuse existing AI "
+            f"(row_id={existing_row.get('id')})"
+        )
+        return _reuse_existing_ai_fields(out, existing_row, ai_content_hash)
+
     api_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
     if not api_key:
         print("[scholarship_ai_final] skipped: OPENAI_API_KEY missing")
@@ -446,8 +598,10 @@ def apply_scholarship_ai_finalization_if_enabled(record: dict[str, Any]) -> dict
                 {"role": "user", "content": user_msg[: cfg.max_input_chars + 2000]},
             ],
         )
+        record_ai_completion(completion.usage)
         text = (completion.choices[0].message.content or "").strip()
     except Exception as e:
+        record_ai_error()
         print(f"[scholarship_ai_final] API error: {type(e).__name__}: {e}")
         _apply_rule_only_fallback(out, rule_score, rule_expl, components)
         return out
