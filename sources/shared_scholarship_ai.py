@@ -21,6 +21,7 @@ from typing import Any
 from ai_monitoring import record_ai_completion, record_ai_error, record_ai_reuse
 from business_filters import MIN_LEAD_DAYS_BEFORE_DEADLINE
 from config import get_scholarships_ai_final_config
+from deadline_humanize import humanize_iso_datetimes_in_text
 from sources.shared_ai_enrichment import json_safe
 
 _JSON_SYSTEM = """You are a scholarship catalog editor helping U.S. students decide whether to apply.
@@ -37,6 +38,7 @@ STRICT RULES:
 9) confidence_score: 0.0-1.0 how well the excerpt supports your outputs.
 10) seo_faq: 2-5 items; each answer must only use facts present in excerpt or honestly say the listing does not state X.
 11) The excerpt may contain long-form content in description_html and detailed requirements/essay prompts in requirements_text or raw_data_preview. Use them. If an essay prompt or word-count guidance is present, summarize the essay theme in eligibility_summary or important_checks and include practical application_tips tied to that prompt without inventing extra requirements.
+12) In student_summary and SEO strings: never paste ISO 8601 timestamps (e.g. 2026-07-09T23:59:59Z). If a deadline appears in prose, write it as "Month D, YYYY" (e.g. July 9, 2026).
 
 Return a single JSON object with exactly these keys (arrays may be empty):
 {
@@ -438,6 +440,29 @@ def _copy_ai_fields_from_existing(out: dict[str, Any], existing_row: dict[str, A
             out[key] = existing_row.get(key)
 
 
+def _sanitize_ai_prose_fields(out: dict[str, Any]) -> None:
+    """Убирает сырые ISO-даты из текстов, попавших в карточку/SEO."""
+    for key in (
+        "ai_student_summary",
+        "seo_excerpt",
+        "seo_overview",
+        "seo_eligibility",
+        "seo_application",
+    ):
+        v = out.get(key)
+        if isinstance(v, str):
+            out[key] = humanize_iso_datetimes_in_text(v)
+    faq = out.get("seo_faq")
+    if isinstance(faq, list):
+        for item in faq:
+            if not isinstance(item, dict):
+                continue
+            for fk in ("q", "a"):
+                fv = item.get(fk)
+                if isinstance(fv, str):
+                    item[fk] = humanize_iso_datetimes_in_text(fv)
+
+
 def _reuse_existing_ai_fields(
     out: dict[str, Any],
     existing_row: dict[str, Any],
@@ -454,6 +479,7 @@ def _reuse_existing_ai_fields(
             "reused_existing_id": existing_row.get("id"),
         },
     )
+    _sanitize_ai_prose_fields(out)
     return out
 
 def _apply_rule_only_fallback(
@@ -501,6 +527,7 @@ def _apply_rule_only_fallback(
             "rule_components": components,
         },
     )
+    _sanitize_ai_prose_fields(record)
 
 
 def _merge_raw_finalization(record: dict[str, Any], meta: dict[str, Any]) -> None:
@@ -693,4 +720,5 @@ def apply_scholarship_ai_finalization_if_enabled(
             "blended_match_score": final_score,
         },
     )
+    _sanitize_ai_prose_fields(out)
     return out

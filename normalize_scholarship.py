@@ -11,6 +11,8 @@ import re
 from datetime import date, datetime, timezone
 from typing import Any
 
+from deadline_humanize import deadline_display_for_card
+
 from scholarship_taxonomy import (
     CANONICAL_CITIZENSHIP_SLUGS,
     CANONICAL_FIELD_OF_STUDY_SLUGS,
@@ -25,7 +27,10 @@ from scholarship_taxonomy import (
     derive_structured_citizenship_statuses,
     derive_structured_field_of_study,
     derive_structured_study_levels,
+    field_of_study_to_display_labels,
     keep_only_canonical_slugs,
+    scholarship_status_to_display,
+    study_levels_to_display_labels,
 )
 
 # Maps to UI category ids (scholarshipCategories.ts)
@@ -845,8 +850,6 @@ def _build_summary_short(record: dict[str, Any]) -> str | None:
     parts: list[str] = []
     prov = (record.get("provider_name") or "").strip()
     amt = (record.get("award_amount_text") or "").strip()
-    dl = (record.get("deadline_text") or "").strip()
-    dd = record.get("deadline_date")
     inst = (record.get("institutions_text") or "").strip()
     loc = (record.get("state_territory_text") or "").strip()
     its = record.get("institution_types")
@@ -884,10 +887,9 @@ def _build_summary_short(record: dict[str, Any]) -> str | None:
     tail_bits: list[str] = []
     if amt:
         tail_bits.append(f"The listed award is {amt.rstrip('.')}.")
-    if dl:
-        tail_bits.append(f"Plan to apply by {dl.rstrip('.')}.")
-    elif dd:
-        tail_bits.append(f"Plan to apply by {dd}.")
+    display_deadline = deadline_display_for_card(record)
+    if display_deadline:
+        tail_bits.append(f"Plan to apply by {display_deadline.rstrip('.')}.")
     parts.extend(tail_bits)
 
     out = " ".join(parts).strip()
@@ -930,6 +932,25 @@ def _build_summary_long(
     if not paras:
         return None
     return "\n\n".join(paras)
+
+
+def _merge_catalog_ui_into_raw_data(record: dict[str, Any]) -> None:
+    """Человекочитаемые подписи для UI (без отдельных колонок в БД): raw_data.catalog_ui."""
+    rd = record.get("raw_data")
+    if isinstance(rd, dict):
+        rd = dict(rd)
+    else:
+        rd = {}
+    rd["catalog_ui"] = {
+        "study_levels_display": study_levels_to_display_labels(record.get("study_levels")),
+        "field_of_study_display": field_of_study_to_display_labels(
+            record.get("field_of_study")
+        ),
+        "scholarship_status_display": scholarship_status_to_display(
+            record.get("scholarship_status")
+        ),
+    }
+    record["raw_data"] = rd
 
 
 def apply_normalization(record: dict[str, Any]) -> None:
@@ -1159,3 +1180,5 @@ def apply_normalization(record: dict[str, Any]) -> None:
         rc_int = None
     if (rc_int is None or rc_int == 0) and signals > 0:
         record["requirements_count"] = signals
+
+    _merge_catalog_ui_into_raw_data(record)

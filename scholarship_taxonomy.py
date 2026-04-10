@@ -773,6 +773,87 @@ CANONICAL_STUDY_LEVEL_SLUGS: frozenset[str] = frozenset(
     }
 )
 
+# UI / карточка: подписи к каноническим slug из study_levels (англ., как в каталоге).
+STUDY_LEVEL_LABELS_EN: dict[str, str] = {
+    "high_school_freshman": "High school freshman",
+    "high_school_sophomore": "High school sophomore",
+    "high_school_junior": "High school junior",
+    "high_school_senior": "High school senior",
+    "college_1": "College freshman",
+    "college_2": "College sophomore",
+    "college_3": "College junior",
+    "college_4": "College senior",
+    "graduate_student": "Graduate student",
+    "adult_non_traditional": "Adult / non-traditional student",
+}
+
+_SLUG_TITLE_SMALL_WORDS: frozenset[str] = frozenset(
+    {"a", "an", "and", "or", "of", "the", "in", "for", "to", "vs", "at", "as"}
+)
+
+
+def slug_words_to_title_label(slug: str) -> str:
+    """Подпись из internal id: biological_and_biomedical_sciences → Biological and biomedical sciences."""
+    parts = [p for p in str(slug).strip().lower().split("_") if p]
+    if not parts:
+        return ""
+    out: list[str] = []
+    for i, w in enumerate(parts):
+        if i > 0 and w in _SLUG_TITLE_SMALL_WORDS:
+            out.append(w)
+        else:
+            out.append(w[:1].upper() + w[1:] if w else w)
+    return " ".join(out)
+
+
+def study_levels_to_display_labels(slugs: Any) -> list[str]:
+    if not isinstance(slugs, list) or not slugs:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in slugs:
+        if not isinstance(raw, str):
+            continue
+        key = raw.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        label = STUDY_LEVEL_LABELS_EN.get(key) or slug_words_to_title_label(key)
+        out.append(label)
+    return out
+
+
+def field_of_study_to_display_labels(slugs: Any) -> list[str]:
+    if not isinstance(slugs, list) or not slugs:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in slugs:
+        if not isinstance(raw, str):
+            continue
+        key = raw.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(slug_words_to_title_label(key))
+    return out
+
+
+SCHOLARSHIP_STATUS_LABELS_EN: dict[str, str] = {
+    "open": "Open",
+    "closed": "Closed",
+    "upcoming": "Upcoming",
+    "unknown": "Not specified",
+}
+
+
+def scholarship_status_to_display(status: Any) -> str | None:
+    s = str(status or "").strip().lower()
+    if not s:
+        return None
+    return SCHOLARSHIP_STATUS_LABELS_EN.get(s) or slug_words_to_title_label(s)
+
+
 CANONICAL_FIELD_OF_STUDY_SLUGS: frozenset[str] = frozenset(
     {
         "agriculture_and_related_sciences",
