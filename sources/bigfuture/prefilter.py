@@ -15,6 +15,7 @@ import tempfile
 from datetime import date, datetime, timezone
 from typing import Any
 
+from award_signals import HIGH_VALUE_AWARD_PATTERN
 from business_filters import classify_business_deadline
 from sources.scholarship_america.parser import parse_award_min_max, parse_deadline_date
 
@@ -31,13 +32,6 @@ _BF_HARD_SKIP: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("employees_only", re.compile(r"\bemployees only\b", re.I)),
     ("employee_assistance", re.compile(r"\bemployee assistance program\b", re.I)),
 )
-
-_FUNDING_SOFT_OK = re.compile(
-    r"\b(full[\s-]+ride|full\s+tuition|tuition\s+cover|"
-    r"stipend|fellowship\s+award)\b",
-    re.I,
-)
-
 
 def _award_text_from_api(raw: Any) -> str | None:
     if raw is None:
@@ -139,7 +133,7 @@ def classify_fast_prefilter(
     else:
         if re.search(r"[\$£€¥]", combined) and re.search(r"\d", combined):
             pass  # ambiguous → review below
-        elif _FUNDING_SOFT_OK.search(combined):
+        elif HIGH_VALUE_AWARD_PATTERN.search(combined):
             pass  # treat as enough signal to not reject funding
         else:
             return (

@@ -45,6 +45,7 @@ _PARSER_ROOT = os.path.dirname(
 if _PARSER_ROOT not in sys.path:
     sys.path.insert(0, _PARSER_ROOT)
 
+# has_meaningful_funding: award_signals (high-value фразы, authoritative provider) + business_filters.
 from business_filters import (
     MIN_LEAD_DAYS_BEFORE_DEADLINE,
     classify_business_deadline,

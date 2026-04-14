@@ -119,6 +119,7 @@ SCHOLARSHIP_UPSERT_BODY_KEYS: tuple[str, ...] = (
     "category",
     "category_slug",
     "tags",
+    "seo_tags",
     "is_active",
     "ai_student_summary",
     "ai_best_for",

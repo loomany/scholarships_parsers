@@ -19,6 +19,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from ai_monitoring import record_ai_completion, record_ai_error, record_ai_reuse
+from award_signals import is_authoritative_provider_hint, text_has_high_value_award_signal
 from business_filters import MIN_LEAD_DAYS_BEFORE_DEADLINE
 from config import get_scholarships_ai_final_config
 from deadline_humanize import humanize_iso_datetimes_in_text
@@ -203,10 +204,15 @@ def compute_rule_based_score(record: dict[str, Any]) -> tuple[int, str, dict[str
             funding_pts = 14
         else:
             funding_pts = 8
-    elif _s(record.get("award_amount_text")) and re.search(
-        r"[\$£€¥]|\d", _s(record.get("award_amount_text"))
-    ):
-        funding_pts = 10
+    else:
+        at = _s(record.get("award_amount_text"))
+        awblob = f"{at} {_s(record.get('awards_text'))}".strip()
+        if at and re.search(r"[\$£€¥]|\d", at):
+            funding_pts = 10
+        elif text_has_high_value_award_signal(awblob):
+            funding_pts = 14
+        elif is_authoritative_provider_hint(record):
+            funding_pts = 8
     score += funding_pts
     components["funding_points"] = funding_pts
 

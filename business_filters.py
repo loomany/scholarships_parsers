@@ -11,6 +11,12 @@ import re
 from datetime import date, timedelta
 from typing import Any, Literal
 
+from award_signals import (
+    is_authoritative_provider_hint,
+    record_funding_language_blob,
+    text_has_high_value_award_signal,
+)
+
 DeadlineBiz = Literal["ok", "no_deadline", "expired", "too_close"]
 
 def _get_min_lead_days() -> int:
@@ -73,7 +79,8 @@ def is_valid_deadline(deadline_date: Any) -> bool:
 def has_meaningful_funding(record: dict[str, Any]) -> bool:
     """
     Есть признаки суммы/выплаты: положительные min/max, текст с суммой,
-    блок awards / winner payment после нормализации.
+    ключевые фразы high-value (award_signals), блок awards / winner payment,
+    либо эвристика авторитетного провайдера (is_verified / university|foundation|…).
     """
     amin = record.get("award_amount_min")
     amax = record.get("award_amount_max")
@@ -88,20 +95,21 @@ def has_meaningful_funding(record: dict[str, Any]) -> bool:
     if at and not _FUNDING_VOID.match(at):
         if re.search(r"[\$£€¥]|\d", at):
             return True
-        if re.search(
-            r"\b(full[\s-]+ride|full\s+tuition|tuition\s+cover|"
-            r"stipend|fellowship\s+award)\b",
-            at,
+        if text_has_high_value_award_signal(at):
+            return True
+
+    awt = (record.get("awards_text") or "").strip()
+    if awt:
+        if text_has_high_value_award_signal(awt):
+            return True
+        if len(awt) >= 8 and re.search(
+            r"[\$£€¥]|\d|\b(funding|award|stipend|grant|payment|remuneration)\b",
+            awt,
             re.I,
         ):
             return True
 
-    awt = (record.get("awards_text") or "").strip()
-    if len(awt) >= 12 and re.search(
-        r"[\$£€¥]|\d|\b(funding|award|stipend|grant|payment|remuneration)\b",
-        awt,
-        re.I,
-    ):
+    if text_has_high_value_award_signal(record_funding_language_blob(record)):
         return True
 
     wpt = (
@@ -109,6 +117,9 @@ def has_meaningful_funding(record: dict[str, Any]) -> bool:
         or (record.get("payment_details") or "")
     ).strip()
     if len(wpt) >= 10:
+        return True
+
+    if is_authoritative_provider_hint(record):
         return True
 
     return False

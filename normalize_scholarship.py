@@ -1,6 +1,7 @@
 """
 Post-parse normalization: filters, categories, requirement signals, ranking_score, slug.
-Rule-based only — no invented facts; nullable/empty when data missing.
+Rule-based only — no invented facts; when there is no numeric award sort, award_amount_text
+is always set (high-value phrase from source text or "Amount Varies").
 """
 
 from __future__ import annotations
@@ -11,6 +12,14 @@ import re
 from datetime import date, datetime, timezone
 from typing import Any
 
+from award_signals import (
+    DEFAULT_AWARD_AMOUNT_TEXT_UNKNOWN,
+    SEO_TAG_HIGH_VALUE,
+    ensure_catalog_listing_or,
+    extract_high_value_display_phrase,
+    infer_high_value_award_tags,
+    is_non_monetary_high_value_award,
+)
 from deadline_humanize import deadline_display_for_card
 
 from scholarship_taxonomy import (
@@ -286,7 +295,34 @@ def _financial_need(blob: str) -> bool:
     )
 
 
+def _record_has_numeric_award_sort(record: dict[str, Any]) -> bool:
+    n = record.get("award_amount_numeric_sort")
+    if n is None:
+        return False
+    if isinstance(n, float) and n != n:
+        return False
+    return True
+
+
+def _ensure_award_amount_text_non_empty(record: dict[str, Any]) -> None:
+    """
+    Если нет числовой сортировки по сумме (min/max), не оставляем award_amount_text пустым:
+    high-value (паттерн без явных $ в строке суммы) → фраза из текста; иначе — Amount Varies.
+    """
+    if _record_has_numeric_award_sort(record):
+        return
+    if str(record.get("award_amount_text") or "").strip():
+        return
+    if is_non_monetary_high_value_award(record):
+        phrase = extract_high_value_display_phrase(record)
+        record["award_amount_text"] = phrase or DEFAULT_AWARD_AMOUNT_TEXT_UNKNOWN
+    else:
+        record["award_amount_text"] = DEFAULT_AWARD_AMOUNT_TEXT_UNKNOWN
+
+
 def _payout_method(record: dict[str, Any], blob: str) -> str:
+    if is_non_monetary_high_value_award(record):
+        return "non_monetary"
     w = " ".join(
         filter(
             None,
@@ -992,6 +1028,9 @@ def apply_normalization(record: dict[str, Any]) -> None:
             num_sort = float(amax)
         except (TypeError, ValueError):
             num_sort = None
+    if is_non_monetary_high_value_award(record):
+        # Не ранжировать по случайным цифрам из заголовка/описания без денежной суммы в поле суммы.
+        num_sort = None
     record["award_amount_numeric_sort"] = num_sort
 
     record["payout_method"] = _payout_method(record, blob)
@@ -1028,6 +1067,36 @@ def apply_normalization(record: dict[str, Any]) -> None:
         record["category_slug"] = merged_tags[0].strip().lower()
     else:
         record["category_slug"] = None
+
+    fund_text = " ".join(
+        str(record.get(k) or "")
+        for k in ("award_amount_text", "awards_text", "winner_payment_text")
+    )
+    award_extra = infer_high_value_award_tags(fund_text)
+    if award_extra:
+        tag_list = list(record.get("tags") or [])
+        tag_seen = {t.strip().lower() for t in tag_list if isinstance(t, str)}
+        for t in award_extra:
+            tl = t.strip().lower()
+            if tl and tl not in tag_seen:
+                tag_seen.add(tl)
+                tag_list.append(tl)
+        record["tags"] = tag_list
+
+    seo_tags_out: list[str] = []
+    if isinstance(record.get("seo_tags"), list):
+        seo_tags_out = [
+            str(x).strip()
+            for x in record["seo_tags"]
+            if isinstance(x, str) and str(x).strip()
+        ]
+    seo_seen = {t.lower() for t in seo_tags_out}
+    if is_non_monetary_high_value_award(record):
+        if SEO_TAG_HIGH_VALUE.lower() not in seo_seen:
+            seo_tags_out.append(SEO_TAG_HIGH_VALUE)
+    record["seo_tags"] = seo_tags_out
+    ensure_catalog_listing_or(record)
+    _ensure_award_amount_text_non_empty(record)
 
     taxonomy_blob = build_taxonomy_blob(record)
     existing_levels, dropped_levels = keep_only_canonical_slugs(
