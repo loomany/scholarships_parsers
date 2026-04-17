@@ -1656,6 +1656,11 @@ def run() -> None:
                     _log(
                         f"  upsert OK ({stats['upsert_ok']}/{effective_target}): {record['title'][:80]}"
                     )
+                    if effective_target > 0 and stats["upsert_ok"] >= effective_target:
+                        _log(
+                            f"{SOURCE}: reached effective_target_upserts={effective_target}, stopping deep pass"
+                        )
+                        break
                 except Exception as exc:
                     stats["upsert_failed"] += 1
                     _log(f"  upsert failed: {record['title'][:80]} -> {exc}")

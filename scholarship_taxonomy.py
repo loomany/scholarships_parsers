@@ -466,7 +466,17 @@ ELIGIBILITY_PATTERNS: list[tuple[str, list[str]]] = [
     ("lgbtq", [r"\blgbtq?\b", r"lesbian", r"gay", r"bisexual", r"transgender", r"queer"]),
     ("foster_youth", [r"foster youth", r"foster care", r"former foster"]),
     ("low_income", [r"low\s*income", r"limited income", r"economically disadvantaged"]),
-    ("international_students", [r"international students?", r"non[-\s]?u\.?s\.? citizen", r"f[- ]?1 visa", r"study permit"]),
+    (
+        "international_students",
+        [
+            r"international students?",
+            r"foreign students?",
+            r"foreign nationals?",
+            r"non[-\s]?u\.?s\.?\s*citizens?",
+            r"f[- ]?1 visa",
+            r"study permit",
+        ],
+    ),
     ("hispanic", [r"\bhispanic\b", r"latinx?", r"latino/a?"]),
     ("first_generation", [r"first[-\s]?generation", r"first in (their|the) family"]),
     ("veterans", [r"\bveteran(s)?\b", r"active duty", r"military service", r"service member"]),
@@ -708,6 +718,8 @@ CITIZENSHIP_RULES: list[tuple[str, list[re.Pattern[str]]]] = [
         "international_student",
         [
             re.compile(r"\binternational student(s)?\b", re.I),
+            re.compile(r"\bforeign student(s)?\b", re.I),
+            re.compile(r"\bforeign national(s)?\b", re.I),
             re.compile(r"\bnon[-\s]?u\.?s\.?\s*citizen(s)?\b", re.I),
             re.compile(r"\bf[-\s]?1 visa\b", re.I),
             re.compile(r"\bstudy permit\b", re.I),
