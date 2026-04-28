@@ -9,6 +9,25 @@
 - **Подсказки по источникам:** в каждой папке `sources/<источник>/.env.example` перечислены переменные этого парсера. Код их **не читает**; скопируйте нужные строки в корневой `.env` вручную.
 - Документация по источнику: `sources/<источник>/README.md`.
 
+### Режимный запуск (единый контракт)
+
+- Единая точка запуска: `python run_all.py`
+- Режим задается env-переменной `PARSER_MODE`:
+  - `html`
+  - `api`
+  - `browser`
+- Маппинг источников по режимам:
+  - `PARSER_MODE_SOURCES_HTML` (по умолчанию `scholarship_america`)
+  - `PARSER_MODE_SOURCES_API` (по умолчанию `simpler_grants_gov,bigfuture`)
+  - `PARSER_MODE_SOURCES_BROWSER` (по умолчанию `bold_org`)
+- Если `PARSER_MODE` не задан, используется `PARSER_SOURCES` как раньше.
+
+Примеры:
+
+- `PARSER_MODE=html python run_all.py`
+- `PARSER_MODE=api python run_all.py`
+- `PARSER_MODE=browser python run_all.py`
+
 ## Структура
 
 - `config.py` — чтение env, алиасы `PARSER_SOURCES`, сводка в консоль.
@@ -27,3 +46,5 @@
 | `scholarship_america` | `sources/scholarship_america/` |
 | `simpler_grants_gov` | `sources/simpler_grants_gov/` |
 | `bigfuture` | `sources/bigfuture/` |
+| `ed_gov_html` | `sources/ed_gov_html/` |
+| `uoregon_research_html` | `sources/uoregon_research_html/` |

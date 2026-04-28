@@ -11,6 +11,7 @@
   supabase/migrations/20260330190000_scholarships_full_content_html.sql
   supabase/migrations/20260330200000_scholarships_normalization_seo.sql
   supabase/migrations/20260401000000_scholarships_full_schema_reconcile.sql — полный reconcile
+  supabase/migrations/20260428120000_iefa_countries.sql — страны IEFA + catalog_countries
   supabase/migrations/20260331120000_scholarship_ai_finalization.sql — единый AI finalization + SEO
 
 При добавлении поля: обновить этот tuple, импорт SCHOLARSHIP_TABLE_KEYS в парсерах,
@@ -100,6 +101,9 @@ SCHOLARSHIP_UPSERT_BODY_KEYS: tuple[str, ...] = (
     "gpa_bucket",
     "location_scope",
     "state_codes",
+    "host_country_names",
+    "applicant_country_names",
+    "country_summary",
     "location_tags",
     "institution_types",
     "easy_apply_flags",

@@ -41,6 +41,7 @@ from business_filters import (
     has_meaningful_funding,
 )
 from config import get_global_config
+from international_signals import detect_international_signal
 from normalize_scholarship import apply_normalization
 from scholarship_db_columns import (
     SCHOLARSHIP_RECORD_DEFAULT_KEYS,
@@ -129,15 +130,17 @@ BOLD_NO_NEW_ROUNDS_STOP = max(1, _get_int_env("BOLD_NO_NEW_ROUNDS_STOP", 4))
 BOLD_RECOVERY_SCROLL_ROUNDS = max(0, _get_int_env("BOLD_RECOVERY_SCROLL_ROUNDS", 3))
 BOLD_RECOVERY_WAIT_MS = max(500, _get_int_env("BOLD_RECOVERY_WAIT_MS", 5000))
 BOLD_POST_LOGIN_WAIT_MS = max(500, _get_int_env("BOLD_POST_LOGIN_WAIT_MS", 2500))
+BOLD_AUTH_WAIT_SECONDS = max(30, _get_int_env("BOLD_AUTH_WAIT_SECONDS", 240))
 BOLD_MAX_RECORDS_DEBUG = max(0, _get_int_env("BOLD_ORG_MAX_RECORDS_DEBUG", 0))
 BOLD_KEEP_BROWSER_OPEN = _get_bool_env("BOLD_KEEP_BROWSER_OPEN", True)
+BOLD_RUN_MODE = (_get_str_env("BOLD_RUN_MODE", "full") or "full").lower()
+BOLD_COLLECT_BATCH_SCROLL_STEPS = max(0, _get_int_env("BOLD_COLLECT_BATCH_SCROLL_STEPS", 0))
 BOLD_PREFILTER_STORE_PATH = _get_str_env(
     "BOLD_PREFILTER_STORE_PATH",
     os.path.join(_PARSER_ROOT, ".bold_prefilter_store.json"),
 )
-# Temporary refresh mode for backfilling older Bold rows with improved mapping.
-# Set BOLD_FORCE_REFRESH=0 later to restore skip-existing behavior.
-BOLD_FORCE_REFRESH = _get_bool_env("BOLD_FORCE_REFRESH", True)
+# Keep normal runs on skip-existing behavior. Set BOLD_FORCE_REFRESH=1 only for explicit backfills.
+BOLD_FORCE_REFRESH = _get_bool_env("BOLD_FORCE_REFRESH", False)
 
 
 def _normalize_key(name: str) -> str:
@@ -201,11 +204,29 @@ def _save_challenge_artifacts(page: Any, marker: str) -> None:
     )
 
 
-def _raise_if_challenge_detected(page: Any, *, phase: str) -> None:
+def _wait_for_challenge_clear(page: Any, timeout_seconds: int) -> bool:
+    deadline = time.time() + max(30, timeout_seconds)
+    while time.time() < deadline:
+        marker = _detect_captcha_or_challenge(page)
+        if not marker:
+            return True
+        page.wait_for_timeout(1000)
+    return _detect_captcha_or_challenge(page) is None
+
+
+def _raise_if_challenge_detected(page: Any, *, phase: str, allow_manual: bool = False) -> None:
     marker = _detect_captcha_or_challenge(page)
     if not marker:
         return
     _save_challenge_artifacts(page, marker)
+    if allow_manual:
+        _log(
+            f"{SOURCE}: anti-bot challenge during {phase}; "
+            f"solve it manually in browser (wait up to {BOLD_AUTH_WAIT_SECONDS}s)"
+        )
+        if _wait_for_challenge_clear(page, BOLD_AUTH_WAIT_SECONDS):
+            _log(f"{SOURCE}: challenge cleared manually, continuing")
+            return
     raise RuntimeError(
         f"Bold.org anti-bot challenge detected during {phase} "
         f"(marker={marker!r}, url={getattr(page, 'url', '')!r})"
@@ -974,7 +995,7 @@ def _login(page: Any) -> None:
 
     page.goto(LOGIN_URL, wait_until="domcontentloaded")
     page.wait_for_timeout(800)
-    _raise_if_challenge_detected(page, phase="login_page_open")
+    _raise_if_challenge_detected(page, phase="login_page_open", allow_manual=True)
 
     email_ok = _safe_fill_first(
         page,
@@ -997,6 +1018,16 @@ def _login(page: Any) -> None:
         BOLD_PASSWORD,
     )
     if not email_ok or not password_ok:
+        # After manual captcha/login the session can already be authenticated and
+        # login fields disappear; in that case continue without failing.
+        if _login_complete(page):
+            _log(f"{SOURCE}: login fields absent but session appears authenticated; continuing")
+            try:
+                page.context.storage_state(path=SESSION_STATE_PATH)
+                print(f"{SOURCE}: saved session state -> {SESSION_STATE_PATH}")
+            except Exception as exc:
+                print(f"{SOURCE}: warning: could not save session state ({exc})")
+            return
         raise RuntimeError("Could not find Bold.org login form fields")
 
     submit = _login_submit_locator(page)
@@ -1016,13 +1047,13 @@ def _login(page: Any) -> None:
         page.wait_for_load_state("networkidle", timeout=15_000)
     except Exception:
         pass
-    _raise_if_challenge_detected(page, phase="post_login_submit")
+    _raise_if_challenge_detected(page, phase="post_login_submit", allow_manual=True)
 
     if not _wait_for_login_complete(page, timeout_ms=30_000):
         raise RuntimeError(
             "Bold.org login did not complete after automatic/manual submit wait"
         )
-    _raise_if_challenge_detected(page, phase="login_complete_check")
+    _raise_if_challenge_detected(page, phase="login_complete_check", allow_manual=True)
 
     try:
         page.context.storage_state(path=SESSION_STATE_PATH)
@@ -1072,8 +1103,15 @@ def _run_recovery_scroll(page: Any, state: "_CaptureState", *, page_idx: int, st
     return False
 
 
+def _effective_scroll_cap() -> int:
+    if BOLD_RUN_MODE == "collect" and BOLD_COLLECT_BATCH_SCROLL_STEPS > 0:
+        return BOLD_COLLECT_BATCH_SCROLL_STEPS
+    return BOLD_SCROLL_STEPS
+
+
 def _visit_scholarship_pages(page: Any, state: "_CaptureState") -> None:
     urls = (PUBLIC_SCHOLARSHIPS_URL, APP_SCHOLARSHIPS_URL)
+    scroll_cap = _effective_scroll_cap()
     for page_idx, url in enumerate(urls, start=1):
         _log(f"{SOURCE}: visit page {page_idx}/{len(urls)} -> {url}")
         page.goto(url, wait_until="domcontentloaded")
@@ -1086,9 +1124,9 @@ def _visit_scholarship_pages(page: Any, state: "_CaptureState") -> None:
         start_candidates = state.candidate_items_seen
         step = 0
         while True:
-            if BOLD_SCROLL_STEPS > 0 and step >= BOLD_SCROLL_STEPS:
+            if scroll_cap > 0 and step >= scroll_cap:
                 _log(
-                    f"{SOURCE}: reached scroll cap {BOLD_SCROLL_STEPS} "
+                    f"{SOURCE}: reached scroll cap {scroll_cap} "
                     f"on page {page_idx}/{len(urls)}"
                 )
                 break
@@ -1399,6 +1437,56 @@ def _response_handler_factory(state: _CaptureState):
     return _handler
 
 
+def _process_deep_candidates(
+    store: BoldPrefilterStore,
+    stats: dict[str, int],
+    seen_records_session: set[str],
+    effective_target: int,
+) -> None:
+    deep_candidates = store.iter_deep_candidates()
+    stats["deep_candidates"] = len(deep_candidates)
+    _log(f"  bold prefilter store: {BOLD_PREFILTER_STORE_PATH}")
+    _log(f"  deep candidates queued: {stats['deep_candidates']}")
+
+    total_deep = len(deep_candidates)
+    for deep_idx, entry in enumerate(deep_candidates, start=1):
+        if deep_idx == 1 or deep_idx % 10 == 0 or deep_idx == total_deep:
+            _log(
+                f"{SOURCE}: deep progress {deep_idx}/{total_deep} "
+                f"(upsert_ok={stats['upsert_ok']} upsert_failed={stats['upsert_failed']})"
+            )
+        item = entry.get("item_snapshot")
+        response_url = str(entry.get("response_url") or "")
+        if not isinstance(item, dict):
+            continue
+        record = _build_record(item, response_url)
+        if not record:
+            continue
+        record_id = _record_identity(record)
+        if record_id in seen_records_session:
+            continue
+        seen_records_session.add(record_id)
+
+        try:
+            upsert_scholarship(record)
+            stats["upsert_ok"] += 1
+            store.mark_processed(entry)
+            _log(
+                f"  upsert OK ({stats['upsert_ok']}/{effective_target}): {record['title'][:80]}"
+            )
+            if effective_target > 0 and stats["upsert_ok"] >= effective_target:
+                _log(
+                    f"{SOURCE}: reached effective_target_upserts={effective_target}, stopping deep pass"
+                )
+                break
+        except Exception as exc:
+            stats["upsert_failed"] += 1
+            _log(f"  upsert failed: {record['title'][:80]} -> {exc}")
+        time.sleep(0.03)
+
+    store.save()
+
+
 def run() -> None:
     from playwright.sync_api import sync_playwright
 
@@ -1411,8 +1499,7 @@ def run() -> None:
         else TARGET_NEW_ITEMS
     )
     use_skip = (
-        SKIP_EXISTING_ON_LIST
-        and DISCOVERY_MODE == "new_only"
+        ((SKIP_EXISTING_ON_LIST and DISCOVERY_MODE == "new_only") or BOLD_RUN_MODE == "process")
         and not BOLD_FORCE_REFRESH
     )
 
@@ -1423,6 +1510,8 @@ def run() -> None:
         f"BOLD_HEADLESS={BOLD_HEADLESS}, "
         f"BOLD_TIMEOUT_MS={BOLD_TIMEOUT_MS}, "
         f"BOLD_FORCE_REFRESH={BOLD_FORCE_REFRESH}, "
+        f"BOLD_RUN_MODE={BOLD_RUN_MODE!r}, "
+        f"BOLD_COLLECT_BATCH_SCROLL_STEPS={BOLD_COLLECT_BATCH_SCROLL_STEPS}, "
         f"SKIP_EXISTING_ON_LIST={SKIP_EXISTING_ON_LIST}, "
         f"DISCOVERY_MODE={DISCOVERY_MODE!r})"
     )
@@ -1461,6 +1550,21 @@ def run() -> None:
     }
     seen_records_session: set[str] = set()
     state = _CaptureState()
+
+    if BOLD_RUN_MODE == "process":
+        _log(f"{SOURCE}: process mode, using existing prefilter store only")
+        _process_deep_candidates(store, stats, seen_records_session, effective_target)
+        _log("")
+        _log(f"deep candidates: {stats['deep_candidates']}")
+        _log(f"upsert OK: {stats['upsert_ok']}")
+        _log(f"upsert failed: {stats['upsert_failed']}")
+        print_ai_session_summary(
+            SOURCE,
+            processed=stats["captured_candidates"],
+            new_found=stats["upsert_ok"],
+            start=ai_usage_start,
+        )
+        return
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=BOLD_HEADLESS)
@@ -1583,6 +1687,28 @@ def run() -> None:
                     continue
 
                 if not has_meaningful_funding(record):
+                    intl_signal = detect_international_signal(
+                        record.get("title"),
+                        record.get("url"),
+                        record.get("eligibility_text"),
+                        record.get("requirements_text"),
+                        record.get("description"),
+                        record.get("tags"),
+                        item,
+                    )
+                    if intl_signal:
+                        stats["prefilter_pass"] += 1
+                        store.upsert_candidate(
+                            source_id=record.get("source_id"),
+                            url=record.get("url"),
+                            title=record.get("title"),
+                            response_url=response_url,
+                            snapshot_hash=_snapshot_hash(item),
+                            prefilter_status=PREFILTER_PASS,
+                            prefilter_reason=f"international_funding_override:{intl_signal}",
+                            item_snapshot=item,
+                        )
+                        continue
                     stats["prefilter_reject_funding"] += 1
                     store.upsert_candidate(
                         source_id=record.get("source_id"),
@@ -1625,48 +1751,16 @@ def run() -> None:
 
             store.save()
 
-            deep_candidates = store.iter_deep_candidates()
-            stats["deep_candidates"] = len(deep_candidates)
-            _log(f"  bold prefilter store: {BOLD_PREFILTER_STORE_PATH}")
-            _log(f"  deep candidates queued: {stats['deep_candidates']}")
-
-            total_deep = len(deep_candidates)
-            for deep_idx, entry in enumerate(deep_candidates, start=1):
-                if deep_idx == 1 or deep_idx % 25 == 0 or deep_idx == total_deep:
-                    _log(
-                        f"{SOURCE}: deep progress {deep_idx}/{total_deep} "
-                        f"(upsert_ok={stats['upsert_ok']} upsert_failed={stats['upsert_failed']})"
-                    )
-                item = entry.get("item_snapshot")
-                response_url = str(entry.get("response_url") or "")
-                if not isinstance(item, dict):
-                    continue
-                record = _build_record(item, response_url)
-                if not record:
-                    continue
-                record_id = _record_identity(record)
-                if record_id in seen_records_session:
-                    continue
-                seen_records_session.add(record_id)
-
-                try:
-                    upsert_scholarship(record)
-                    stats["upsert_ok"] += 1
-                    store.mark_processed(entry)
-                    _log(
-                        f"  upsert OK ({stats['upsert_ok']}/{effective_target}): {record['title'][:80]}"
-                    )
-                    if effective_target > 0 and stats["upsert_ok"] >= effective_target:
-                        _log(
-                            f"{SOURCE}: reached effective_target_upserts={effective_target}, stopping deep pass"
-                        )
-                        break
-                except Exception as exc:
-                    stats["upsert_failed"] += 1
-                    _log(f"  upsert failed: {record['title'][:80]} -> {exc}")
-                time.sleep(0.03)
-
-            store.save()
+            if BOLD_RUN_MODE == "collect":
+                deep_candidates = store.iter_deep_candidates()
+                stats["deep_candidates"] = len(deep_candidates)
+                _log(f"  bold prefilter store: {BOLD_PREFILTER_STORE_PATH}")
+                _log(
+                    f"{SOURCE}: collect mode complete: captured={stats['captured_candidates']} "
+                    f"deep_candidates={stats['deep_candidates']}"
+                )
+            else:
+                _process_deep_candidates(store, stats, seen_records_session, effective_target)
 
             _log("")
             _log(f"captured candidates: {stats['captured_candidates']}")
@@ -1701,8 +1795,14 @@ def run() -> None:
                 except KeyboardInterrupt:
                     _log(f"{SOURCE}: browser hold interrupted, closing browser.")
         finally:
-            context.close()
-            browser.close()
+            try:
+                context.close()
+            except Exception as exc:
+                _log(f"{SOURCE}: context close warning: {exc}")
+            try:
+                browser.close()
+            except Exception as exc:
+                _log(f"{SOURCE}: browser close warning: {exc}")
 
 _TITLE_KEYS: tuple[str, ...] = (
     "title",

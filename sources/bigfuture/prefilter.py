@@ -17,6 +17,7 @@ from typing import Any
 
 from award_signals import HIGH_VALUE_AWARD_PATTERN
 from business_filters import classify_business_deadline
+from international_signals import detect_international_signal
 from sources.scholarship_america.parser import parse_award_min_max, parse_deadline_date
 
 PREFILTER_PASS = "prefilter_pass"
@@ -122,8 +123,22 @@ def classify_fast_prefilter(
 
     amount_hint = award_t or (f"${int(mx):,}" if mx is not None else None)
 
+    intl_signal = detect_international_signal(
+        card_row.get("title"),
+        card_row.get("url"),
+        blurb,
+        raw,
+    )
+
     if mx is not None:
         if mx < float(min_amount_hint):
+            if intl_signal:
+                return (
+                    PREFILTER_REVIEW,
+                    f"international_low_amount_review:{intl_signal}",
+                    amount_hint,
+                    close_s,
+                )
             return (
                 PREFILTER_REJECT_FUNDING,
                 f"below_min_amount_hint(<{min_amount_hint})",
@@ -195,6 +210,11 @@ def entry_eligible_for_deep_pass(
         return True
     if st == PREFILTER_REJECT_DEADLINE:
         return False
+    reason = str(entry.get("prefilter_reason") or "")
+    if st in (PREFILTER_REJECT_FUNDING, PREFILTER_REVIEW) and reason.startswith(
+        "international_"
+    ):
+        return True
     if st in (PREFILTER_REJECT_FUNDING, PREFILTER_REJECT_RELEVANCE):
         if recheck_reject_days <= 0:
             return False

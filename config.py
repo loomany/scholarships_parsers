@@ -41,6 +41,12 @@ SOURCE_ALIASES: dict[str, str] = {
     "sa": "scholarship_america",
     "bf": "bigfuture",
     "bold": "bold_org",
+    "scholarshipscom": "scholarships_com",
+    "scholarships_com": "scholarships_com",
+    "scholarships": "scholarships_com",
+    "edgov": "ed_gov_html",
+    "uoregon": "uoregon_research_html",
+    "iefa": "iefa",
 }
 
 CANONICAL_SOURCE_KEYS: tuple[str, ...] = (
@@ -48,11 +54,16 @@ CANONICAL_SOURCE_KEYS: tuple[str, ...] = (
     "simpler_grants_gov",
     "bigfuture",
     "bold_org",
+    "scholarships_com",
+    "iefa",
+    "ed_gov_html",
+    "uoregon_research_html",
 )
 
 
 @dataclass(frozen=True)
 class GlobalConfig:
+    parser_mode: str
     parser_sources_raw: str
     target_new_items: int
     max_list_pages: int
@@ -64,7 +75,9 @@ class GlobalConfig:
     @classmethod
     def load(cls) -> GlobalConfig:
         dm = get_str("DISCOVERY_MODE", "new_only") or "new_only"
+        pm = get_str("PARSER_MODE", "").lower()
         return cls(
+            parser_mode=pm,
             parser_sources_raw=get_str("PARSER_SOURCES", "scholarship_america"),
             target_new_items=get_int("TARGET_NEW_ITEMS", 50),
             max_list_pages=get_int("MAX_LIST_PAGES", 1000),
@@ -75,7 +88,16 @@ class GlobalConfig:
         )
 
     def resolved_source_keys(self) -> list[str]:
-        raw = self.parser_sources_raw.lower().strip()
+        if self.parser_mode:
+            mode_sources = {
+                "html": get_str("PARSER_MODE_SOURCES_HTML", "scholarship_america"),
+                "api": get_str("PARSER_MODE_SOURCES_API", "simpler_grants_gov,bigfuture"),
+                "browser": get_str("PARSER_MODE_SOURCES_BROWSER", "bold_org"),
+            }
+            raw_mode = mode_sources.get(self.parser_mode, "").strip().lower()
+            raw = raw_mode if raw_mode else self.parser_sources_raw.lower().strip()
+        else:
+            raw = self.parser_sources_raw.lower().strip()
         if raw == "all":
             return list(CANONICAL_SOURCE_KEYS)
         out: list[str] = []
@@ -246,6 +268,14 @@ def source_enabled(canonical_key: str) -> bool:
         return get_bigfuture_config().enabled
     if canonical_key == "bold_org":
         return get_bool("BOLD_ORG_ENABLED", True)
+    if canonical_key == "scholarships_com":
+        return get_bool("SCHOLARSHIPS_COM_ENABLED", True)
+    if canonical_key == "ed_gov_html":
+        return get_bool("ED_GOV_HTML_ENABLED", True)
+    if canonical_key == "uoregon_research_html":
+        return get_bool("UOREGON_RESEARCH_HTML_ENABLED", True)
+    if canonical_key == "iefa":
+        return get_bool("IEFA_ENABLED", False)
     return True
 
 
@@ -278,6 +308,7 @@ def print_parser_config_summary(resolved_keys: list[str] | None = None) -> None:
     print("╔══════════════════════════════════════════════════════════════════╗")
     print("║                     PARSER CONFIG SUMMARY                        ║")
     print("╠══════════════════════════════════════════════════════════════════╣")
+    print(f"║ PARSER_MODE:        {g.parser_mode!r}")
     print(f"║ PARSER_SOURCES raw: {g.parser_sources_raw!r}")
     print(f"║ resolved keys:      {keys!r}")
     print(
