@@ -44,6 +44,10 @@ SOURCE_ALIASES: dict[str, str] = {
     "scholarshipscom": "scholarships_com",
     "scholarships_com": "scholarships_com",
     "scholarships": "scholarships_com",
+    "mastersportal": "mastersportal",
+    "mp": "mastersportal",
+    "scholars4dev": "scholars4dev",
+    "s4d": "scholars4dev",
     "edgov": "ed_gov_html",
     "uoregon": "uoregon_research_html",
     "iefa": "iefa",
@@ -55,6 +59,8 @@ CANONICAL_SOURCE_KEYS: tuple[str, ...] = (
     "bigfuture",
     "bold_org",
     "scholarships_com",
+    "mastersportal",
+    "scholars4dev",
     "iefa",
     "ed_gov_html",
     "uoregon_research_html",
@@ -270,6 +276,10 @@ def source_enabled(canonical_key: str) -> bool:
         return get_bool("BOLD_ORG_ENABLED", True)
     if canonical_key == "scholarships_com":
         return get_bool("SCHOLARSHIPS_COM_ENABLED", True)
+    if canonical_key == "mastersportal":
+        return get_bool("MASTERSPORTAL_ENABLED", False)
+    if canonical_key == "scholars4dev":
+        return get_bool("SCHOLARS4DEV_ENABLED", False)
     if canonical_key == "ed_gov_html":
         return get_bool("ED_GOV_HTML_ENABLED", True)
     if canonical_key == "uoregon_research_html":

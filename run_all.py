@@ -36,6 +36,7 @@ if os.environ.get("RUN_ALL_ALLOW_HEADLESS", "").strip().lower() not in (
     os.environ["BIGFUTURE_HEADLESS"] = "0"
     os.environ["BOLD_HEADLESS"] = "0"
     os.environ["SCHOLARSHIPS_COM_HEADLESS"] = "0"
+    os.environ["MASTERSPORTAL_HEADLESS"] = "0"
 # Держим окно открытым на протяжении выполнения, но не блокируем завершение бесконечным "hold open".
 os.environ["BOLD_KEEP_BROWSER_OPEN"] = "0"
 os.environ["SCHOLARSHIPS_COM_KEEP_BROWSER_OPEN"] = "0"
@@ -57,6 +58,8 @@ _SOURCE_MODULES: dict[str, tuple[str, str]] = {
     "bigfuture": ("BigFuture (College Board)", "sources.bigfuture"),
     "bold_org": ("Bold.org", "sources.bold_org"),
     "scholarships_com": ("Scholarships.com", "sources.scholarships_com"),
+    "mastersportal": ("Mastersportal", "sources.mastersportal"),
+    "scholars4dev": ("Scholars4Dev", "sources.scholars4dev"),
     "iefa": ("IEFA.org", "sources.iefa"),
     "ed_gov_html": ("ED.gov Grants Page", "sources.ed_gov_html"),
     "uoregon_research_html": ("UOregon External Funding", "sources.uoregon_research_html"),
@@ -69,6 +72,8 @@ _SOURCE_DOMAINS: dict[str, str] = {
     "bigfuture": "bigfuture.collegeboard.org",
     "bold_org": "bold.org",
     "scholarships_com": "scholarships.com",
+    "mastersportal": "mastersportal.com",
+    "scholars4dev": "scholars4dev.com",
     "iefa": "iefa.org",
     "ed_gov_html": "ed.gov",
     "uoregon_research_html": "research.uoregon.edu",
