@@ -504,7 +504,16 @@ def _process_item(
     if SKIP_EXISTING_ON_LIST and listing_is_known(preview, idx, title_fallback=USE_TITLE_FALLBACK_KNOWN):
         stats["known_skipped"] += 1
         return _reached_debug_cap(stats)
-    detail = _extract_detail_sections(_fetch(url)) if SCHOLARS4DEV_DETAIL_FETCH else {}
+    try:
+        detail = _extract_detail_sections(_fetch(url)) if SCHOLARS4DEV_DETAIL_FETCH else {}
+    except requests.HTTPError as exc:
+        stats["detail_fetch_failed"] += 1
+        _log(f"{SOURCE}: skip detail fetch HTTP error: {url} ({exc})")
+        return _reached_debug_cap(stats)
+    except requests.RequestException as exc:
+        stats["detail_fetch_failed"] += 1
+        _log(f"{SOURCE}: skip detail fetch error: {url} ({exc})")
+        return _reached_debug_cap(stats)
     record = _build_record(item, detail)
     if not has_meaningful_funding(record):
         stats["skip_no_funding"] += 1
@@ -657,6 +666,7 @@ def run() -> None:
         "duplicate_skipped": 0,
         "discovery_pages": 0,
         "discovery_errors": 0,
+        "detail_fetch_failed": 0,
     }
     seen_urls: set[str] = set()
     if _walk_sitemap_discovery(idx, stats, seen_urls):
