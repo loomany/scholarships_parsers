@@ -12,6 +12,7 @@ import re
 from datetime import date, datetime, timezone
 from typing import Any
 
+from country_eligibility import apply_country_eligibility
 from award_signals import (
     DEFAULT_AWARD_AMOUNT_TEXT_UNKNOWN,
     SEO_TAG_HIGH_VALUE,
@@ -1184,6 +1185,8 @@ def apply_normalization(record: dict[str, Any]) -> None:
     else:
         record["location_scope"] = None
         record["state_codes"] = []
+
+    apply_country_eligibility(record)
 
     inst = record.get("institutions_text")
     record["institution_types"] = (

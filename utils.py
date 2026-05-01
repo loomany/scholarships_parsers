@@ -232,6 +232,39 @@ def _preserve_provider_fields(
     return out
 
 
+def _non_empty_list(value: Any) -> list[Any]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if item not in (None, "")]
+
+
+def _preserve_country_eligibility_fields(
+    record: Mapping[str, Any],
+    existing_row: dict[str, Any] | None,
+) -> dict[str, Any]:
+    out = dict(record)
+    if not isinstance(existing_row, dict):
+        return out
+
+    # IEFA rebuilds these fields from explicit source columns on every run.
+    if str(out.get("source") or "").strip().lower() == "iefa":
+        return out
+
+    for key in ("applicant_country_codes", "host_country_codes"):
+        incoming = _non_empty_list(out.get(key))
+        existing = _non_empty_list(existing_row.get(key))
+        if not incoming and existing:
+            out[key] = existing
+
+    incoming_notes = _non_empty_list(out.get("country_eligibility_notes"))
+    existing_notes = _non_empty_list(existing_row.get("country_eligibility_notes"))
+    if incoming_notes and existing_notes:
+        out["country_eligibility_notes"] = list(dict.fromkeys(existing_notes + incoming_notes))
+    elif existing_notes:
+        out["country_eligibility_notes"] = existing_notes
+    return out
+
+
 # Поля, которые нельзя массово передавать в update (id задаётся в .eq)
 _SKIP_ON_WRITE = frozenset({"id"})
 
@@ -271,6 +304,7 @@ def upsert_scholarship(record: Mapping[str, Any]) -> dict[str, Any]:
 
     existing_row = _load_existing_row_by_id(client, row_id) if row_id is not None else None
     prepared = _preserve_provider_fields(prepared, existing_row)
+    prepared = _preserve_country_eligibility_fields(prepared, existing_row)
 
     from sources.shared_scholarship_ai import apply_scholarship_ai_finalization_if_enabled
 
