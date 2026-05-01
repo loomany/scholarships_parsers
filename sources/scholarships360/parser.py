@@ -28,6 +28,7 @@ from utils import KnownScholarshipIndex, get_client, listing_is_known, load_know
 SOURCE = "scholarships360"
 SITE_ORIGIN = "https://scholarships360.org"
 SEARCH_URL = f"{SITE_ORIGIN}/scholarships/search/"
+AJAX_URL = f"{SITE_ORIGIN}/wp-admin/admin-ajax.php"
 DEFAULT_CURRENCY = "USD"
 HEADERS = {
     "User-Agent": (
@@ -102,6 +103,32 @@ def _fetch(url: str) -> str:
     response = requests.get(url, headers=HEADERS, timeout=SCHOLARSHIPS360_TIMEOUT_SECONDS)
     response.raise_for_status()
     return response.text
+
+
+def _fetch_listing_page(page_idx: int) -> tuple[str, str]:
+    if page_idx <= 1:
+        return _fetch(SEARCH_URL), SEARCH_URL
+    if SCHOLARSHIPS360_REQUEST_DELAY_MS:
+        time.sleep(SCHOLARSHIPS360_REQUEST_DELAY_MS / 1000.0)
+    response = requests.post(
+        AJAX_URL,
+        data={
+            "action": "ajax_edu_filter_level",
+            "page": str(page_idx),
+            "searchTerm": "",
+            "sidebar_academic_interest": "",
+            "sidebar_state": "",
+            "sidebar_grade": "",
+            "sidebar_background": "",
+            "sidebar_sort": "newness",
+        },
+        headers={**HEADERS, "Referer": SEARCH_URL},
+        timeout=SCHOLARSHIPS360_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    template = payload.get("template") if isinstance(payload, dict) else None
+    return str(template or ""), f"{SEARCH_URL}?current_page={page_idx}"
 
 
 def _canonical_url(url: str) -> str:
@@ -348,48 +375,66 @@ def run() -> None:
             _log(f"{SOURCE}: warning: failed to load known index ({exc})")
     stats = {"listing_seen": 0, "known_skipped": 0, "skip_no_funding": 0, "skip_deadline": 0, "upsert_ok": 0, "upsert_failed": 0}
     success_rows: list[dict[str, str]] = []
-    html = _fetch(SEARCH_URL)
-    items = _extract_listing_items(html, SEARCH_URL)
-    _log(f"{SOURCE}: search candidates={len(items)}")
     seen: set[str] = set()
-    for item in items:
-        url = str(item.get("url") or "")
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        stats["listing_seen"] += 1
-        preview = {"source": SOURCE, "source_id": item.get("source_id"), "url": url, "title": item.get("title")}
-        if SKIP_EXISTING_ON_LIST and listing_is_known(preview, idx, title_fallback=USE_TITLE_FALLBACK_KNOWN):
-            stats["known_skipped"] += 1
-            continue
-        detail = _extract_detail(_fetch(url)) if SCHOLARSHIPS360_DETAIL_FETCH else {}
-        record = _build_record(item, detail)
-        if not has_meaningful_funding(record):
-            stats["skip_no_funding"] += 1
-            _log(f"{SOURCE}: skip no funding: {record.get('title')}")
-            continue
-        dbiz = classify_business_deadline(record.get("deadline_date"))
-        if dbiz != "ok":
-            stats["skip_deadline"] += 1
-            _log(f"{SOURCE}: skip deadline {dbiz}: {record.get('title')}")
-            continue
-        unknown = set(record) - set(SCHOLARSHIP_UPSERT_BODY_KEYS) - {"id"}
-        if unknown:
-            raise ValueError(f"unknown keys in record: {sorted(unknown)}")
-        try:
-            row = upsert_scholarship(record)
-            stats["upsert_ok"] += 1
-            success_rows.append({"title": str(record.get("title") or ""), "url": str(record.get("url") or ""), "slug": str(row.get("slug") or record.get("slug") or "")})
-            _log(f"{SOURCE}: upsert OK #{stats['upsert_ok']}: {record.get('title')} | slug={success_rows[-1]['slug']}")
-        except Exception as exc:
-            stats["upsert_failed"] += 1
-            _log(f"{SOURCE}: upsert failed for {record.get('title')!r}: {exc}")
-        if TARGET_NEW_ITEMS > 0 and stats["upsert_ok"] >= TARGET_NEW_ITEMS:
-            _log(f"{SOURCE}: reached TARGET_NEW_ITEMS={TARGET_NEW_ITEMS}")
+    no_new_pages = 0
+    for page_idx in range(1, max(1, MAX_LIST_PAGES) + 1):
+        html, page_url = _fetch_listing_page(page_idx)
+        items = _extract_listing_items(html, page_url)
+        _log(f"{SOURCE}: search page {page_idx}/{MAX_LIST_PAGES}: candidates={len(items)}")
+        if not items:
             break
-        if SCHOLARSHIPS360_MAX_RECORDS_DEBUG > 0 and stats["listing_seen"] >= SCHOLARSHIPS360_MAX_RECORDS_DEBUG:
-            _log(f"{SOURCE}: reached debug cap={SCHOLARSHIPS360_MAX_RECORDS_DEBUG}")
+        new_on_page = 0
+        stop = False
+        for item in items:
+            url = str(item.get("url") or "")
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            stats["listing_seen"] += 1
+            preview = {"source": SOURCE, "source_id": item.get("source_id"), "url": url, "title": item.get("title")}
+            if SKIP_EXISTING_ON_LIST and listing_is_known(preview, idx, title_fallback=USE_TITLE_FALLBACK_KNOWN):
+                stats["known_skipped"] += 1
+                continue
+            new_on_page += 1
+            detail = _extract_detail(_fetch(url)) if SCHOLARSHIPS360_DETAIL_FETCH else {}
+            record = _build_record(item, detail)
+            if not has_meaningful_funding(record):
+                stats["skip_no_funding"] += 1
+                _log(f"{SOURCE}: skip no funding: {record.get('title')}")
+                continue
+            dbiz = classify_business_deadline(record.get("deadline_date"))
+            if dbiz != "ok":
+                stats["skip_deadline"] += 1
+                _log(f"{SOURCE}: skip deadline {dbiz}: {record.get('title')}")
+                continue
+            unknown = set(record) - set(SCHOLARSHIP_UPSERT_BODY_KEYS) - {"id"}
+            if unknown:
+                raise ValueError(f"unknown keys in record: {sorted(unknown)}")
+            try:
+                row = upsert_scholarship(record)
+                stats["upsert_ok"] += 1
+                success_rows.append({"title": str(record.get("title") or ""), "url": str(record.get("url") or ""), "slug": str(row.get("slug") or record.get("slug") or "")})
+                _log(f"{SOURCE}: upsert OK #{stats['upsert_ok']}: {record.get('title')} | slug={success_rows[-1]['slug']}")
+            except Exception as exc:
+                stats["upsert_failed"] += 1
+                _log(f"{SOURCE}: upsert failed for {record.get('title')!r}: {exc}")
+            if TARGET_NEW_ITEMS > 0 and stats["upsert_ok"] >= TARGET_NEW_ITEMS:
+                _log(f"{SOURCE}: reached TARGET_NEW_ITEMS={TARGET_NEW_ITEMS}")
+                stop = True
+                break
+            if SCHOLARSHIPS360_MAX_RECORDS_DEBUG > 0 and stats["listing_seen"] >= SCHOLARSHIPS360_MAX_RECORDS_DEBUG:
+                _log(f"{SOURCE}: reached debug cap={SCHOLARSHIPS360_MAX_RECORDS_DEBUG}")
+                stop = True
+                break
+        if stop:
             break
+        if new_on_page == 0:
+            no_new_pages += 1
+            _log(f"{SOURCE}: page {page_idx}: no new listings ({no_new_pages}/{NO_NEW_PAGES_STOP})")
+            if NO_NEW_PAGES_STOP > 0 and no_new_pages >= NO_NEW_PAGES_STOP:
+                break
+        else:
+            no_new_pages = 0
     _log(f"{SOURCE}: success rows: {success_rows}")
     _log(f"{SOURCE}: done {stats}")
 
