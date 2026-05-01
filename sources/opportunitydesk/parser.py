@@ -393,7 +393,13 @@ def run() -> None:
     for page_idx in range(1, max(1, MAX_LIST_PAGES) + 1):
         page_url = _page_url(page_idx)
         _log(f"{SOURCE}: listing page {page_idx}/{MAX_LIST_PAGES}: {page_url}")
-        html = _fetch(page_url)
+        try:
+            html = _fetch(page_url)
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                _log(f"{SOURCE}: reached end of listing pages at page {page_idx} (404)")
+                break
+            raise
         items = _extract_listing_items(html, page_url)
         _log(f"{SOURCE}: listing page {page_idx}: candidates={len(items)}")
         if not items:
