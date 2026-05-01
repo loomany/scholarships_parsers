@@ -27,8 +27,10 @@ from utils import KnownScholarshipIndex, get_client, listing_is_known, load_know
 
 SOURCE = "daad"
 SITE_ORIGIN = "https://www2.daad.de"
+ALT_SITE_ORIGIN = "https://www.daad.de"
 DB_URL = f"{SITE_ORIGIN}/deutschland/stipendium/datenbank/en/21148-scholarship-database/"
 DATA_BASE = f"{SITE_ORIGIN}/bundles/daadstipendiendatenbanklsh/data/a/js"
+ALT_DATA_BASE = f"{ALT_SITE_ORIGIN}/bundles/daadstipendiendatenbanklsh/data/a/js"
 DEFAULT_CURRENCY = "EUR"
 HEADERS = {
     "User-Agent": (
@@ -65,6 +67,8 @@ DAAD_ENABLED = _get_bool_env("DAAD_ENABLED", True)
 DAAD_DETAIL_FETCH = _get_bool_env("DAAD_DETAIL_FETCH", True)
 DAAD_REQUEST_DELAY_MS = max(0, _get_int_env("DAAD_REQUEST_DELAY_MS", 500))
 DAAD_TIMEOUT_SECONDS = max(10, _get_int_env("DAAD_TIMEOUT_SECONDS", 45))
+DAAD_RETRY_ATTEMPTS = max(1, _get_int_env("DAAD_RETRY_ATTEMPTS", 4))
+DAAD_RETRY_BACKOFF_SECONDS = max(1, _get_int_env("DAAD_RETRY_BACKOFF_SECONDS", 5))
 DAAD_ONLY_DAAD_FUNDED = _get_bool_env("DAAD_ONLY_DAAD_FUNDED", False)
 DAAD_MAX_RECORDS_DEBUG = max(0, _get_int_env("DAAD_MAX_RECORDS_DEBUG", 0))
 
@@ -86,15 +90,39 @@ def _clean_text(value: Any) -> str | None:
 
 
 def _fetch(url: str) -> str:
-    if DAAD_REQUEST_DELAY_MS:
-        time.sleep(DAAD_REQUEST_DELAY_MS / 1000.0)
-    response = requests.get(url, headers=HEADERS, timeout=DAAD_TIMEOUT_SECONDS)
-    response.raise_for_status()
-    return response.text
+    last_exc: Exception | None = None
+    for attempt in range(1, DAAD_RETRY_ATTEMPTS + 1):
+        if DAAD_REQUEST_DELAY_MS:
+            time.sleep(DAAD_REQUEST_DELAY_MS / 1000.0)
+        try:
+            response = requests.get(url, headers=HEADERS, timeout=DAAD_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            return response.text
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt >= DAAD_RETRY_ATTEMPTS:
+                break
+            wait_s = DAAD_RETRY_BACKOFF_SECONDS * attempt
+            _log(f"{SOURCE}: fetch retry {attempt}/{DAAD_RETRY_ATTEMPTS} after {type(exc).__name__}: {url} (sleep {wait_s}s)")
+            time.sleep(wait_s)
+    if last_exc:
+        raise last_exc
+    raise RuntimeError(f"Failed to fetch {url}")
 
 
 def _load_taffy(name: str) -> list[dict[str, Any]]:
-    text = _fetch(f"{DATA_BASE}/{name}.js")
+    last_exc: Exception | None = None
+    for base_url in (DATA_BASE, ALT_DATA_BASE):
+        try:
+            text = _fetch(f"{base_url}/{name}.js")
+            break
+        except requests.RequestException as exc:
+            last_exc = exc
+            _log(f"{SOURCE}: data host failed for {name}.js: {base_url} ({type(exc).__name__})")
+    else:
+        if last_exc:
+            raise last_exc
+        raise RuntimeError(f"Cannot fetch DAAD data file {name}.js")
     start = text.find("[")
     end = text.rfind("]")
     if start < 0 or end <= start:
