@@ -16,23 +16,26 @@ searches recursively for scholarship-like objects.
 
 from __future__ import annotations
 
+# Сразу в консоль: импорты тяжёлые, иначе кажется «тишина» 10–60+ с.
+import sys
+print("bold_org: loading module (Playwright, config, ...); wait...", file=sys.stderr, flush=True)
+
 import json
 import os
 import re
-import sys
 import time
 import hashlib
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-from ai_monitoring import print_ai_session_summary, record_ai_skip, snapshot_ai_usage
-
 _PARSER_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
 if _PARSER_ROOT not in sys.path:
     sys.path.insert(0, _PARSER_ROOT)
+
+from ai_monitoring import print_ai_session_summary, record_ai_skip, snapshot_ai_usage
 
 # has_meaningful_funding: award_signals + business_filters (общий для всех источников).
 from business_filters import (
@@ -135,6 +138,7 @@ BOLD_MAX_RECORDS_DEBUG = max(0, _get_int_env("BOLD_ORG_MAX_RECORDS_DEBUG", 0))
 BOLD_KEEP_BROWSER_OPEN = _get_bool_env("BOLD_KEEP_BROWSER_OPEN", True)
 BOLD_RUN_MODE = (_get_str_env("BOLD_RUN_MODE", "full") or "full").lower()
 BOLD_COLLECT_BATCH_SCROLL_STEPS = max(0, _get_int_env("BOLD_COLLECT_BATCH_SCROLL_STEPS", 0))
+BOLD_REQUIRE_MANUAL_AUTH = _get_bool_env("BOLD_REQUIRE_MANUAL_AUTH", True)
 BOLD_PREFILTER_STORE_PATH = _get_str_env(
     "BOLD_PREFILTER_STORE_PATH",
     os.path.join(_PARSER_ROOT, ".bold_prefilter_store.json"),
@@ -927,8 +931,33 @@ def _login_complete(page: Any) -> bool:
         current_url = (page.url or "").lower()
     except Exception:
         current_url = ""
+    try:
+        current_host = (urlparse(current_url).netloc or "").lower()
+    except Exception:
+        current_host = ""
+    is_app_host = current_host.endswith("app.bold.org")
 
-    if current_url and not any(
+    # Public bold.org page with Login/Join means definitely not authenticated.
+    try:
+        auth_cta = page.get_by_role(
+            "link",
+            name=re.compile(r"^\s*(log in|login|sign in|join bold\.org)\s*$", re.IGNORECASE),
+        )
+        if auth_cta.count() > 0:
+            return False
+    except Exception:
+        pass
+    try:
+        auth_cta_btn = page.get_by_role(
+            "button",
+            name=re.compile(r"^\s*(log in|login|sign in|join bold\.org)\s*$", re.IGNORECASE),
+        )
+        if auth_cta_btn.count() > 0:
+            return False
+    except Exception:
+        pass
+
+    if is_app_host and current_url and not any(
         token in current_url
         for token in (
             "/reset-password",
@@ -964,18 +993,8 @@ def _login_complete(page: Any) -> bool:
                 break
         except Exception:
             continue
-    if fields_gone:
+    if fields_gone and is_app_host:
         return True
-
-    try:
-        login_heading = page.get_by_role(
-            "heading",
-            name=re.compile(r"sign in|log in", re.IGNORECASE),
-        )
-        if login_heading.count() == 0:
-            return True
-    except Exception:
-        pass
 
     return False
 
@@ -987,6 +1006,14 @@ def _wait_for_login_complete(page: Any, timeout_ms: int) -> bool:
             return True
         page.wait_for_timeout(500)
     return _login_complete(page)
+
+
+def _save_session_state(page: Any) -> None:
+    try:
+        page.context.storage_state(path=SESSION_STATE_PATH)
+        print(f"{SOURCE}: saved session state -> {SESSION_STATE_PATH}")
+    except Exception as exc:
+        print(f"{SOURCE}: warning: could not save session state ({exc})")
 
 
 def _login(page: Any) -> None:
@@ -1022,11 +1049,7 @@ def _login(page: Any) -> None:
         # login fields disappear; in that case continue without failing.
         if _login_complete(page):
             _log(f"{SOURCE}: login fields absent but session appears authenticated; continuing")
-            try:
-                page.context.storage_state(path=SESSION_STATE_PATH)
-                print(f"{SOURCE}: saved session state -> {SESSION_STATE_PATH}")
-            except Exception as exc:
-                print(f"{SOURCE}: warning: could not save session state ({exc})")
+            _save_session_state(page)
             return
         raise RuntimeError("Could not find Bold.org login form fields")
 
@@ -1054,12 +1077,61 @@ def _login(page: Any) -> None:
             "Bold.org login did not complete after automatic/manual submit wait"
         )
     _raise_if_challenge_detected(page, phase="login_complete_check", allow_manual=True)
+    _save_session_state(page)
 
+
+def _manual_auth_gate(page: Any) -> None:
+    page.goto(LOGIN_URL, wait_until="domcontentloaded")
+    page.wait_for_timeout(1000)
+    _raise_if_challenge_detected(page, phase="manual_auth_login_open", allow_manual=True)
+
+    # Try to open login form automatically on public pages.
     try:
-        page.context.storage_state(path=SESSION_STATE_PATH)
-        print(f"{SOURCE}: saved session state -> {SESSION_STATE_PATH}")
-    except Exception as exc:
-        print(f"{SOURCE}: warning: could not save session state ({exc})")
+        login_link = page.get_by_role(
+            "link",
+            name=re.compile(r"^\s*(log in|login|sign in)\s*$", re.IGNORECASE),
+        )
+        if login_link.count() > 0:
+            login_link.first.click()
+            page.wait_for_timeout(1200)
+    except Exception:
+        pass
+    try:
+        login_btn = page.get_by_role(
+            "button",
+            name=re.compile(r"^\s*(log in|login|sign in)\s*$", re.IGNORECASE),
+        )
+        if login_btn.count() > 0:
+            login_btn.first.click()
+            page.wait_for_timeout(1200)
+    except Exception:
+        pass
+
+    _log(
+        f"{SOURCE}: manual auth gate enabled. Complete login/captcha in browser first."
+    )
+    if sys.stdin and sys.stdin.isatty():
+        _log(f"{SOURCE}: when login is complete, press Enter in this terminal to continue...")
+        try:
+            input()
+        except EOFError:
+            pass
+    else:
+        _log(
+            f"{SOURCE}: non-interactive terminal detected; waiting up to "
+            f"{BOLD_AUTH_WAIT_SECONDS}s for manual login/captcha"
+        )
+        if not _wait_for_login_complete(page, timeout_ms=BOLD_AUTH_WAIT_SECONDS * 1000):
+            raise RuntimeError(
+                "Manual login did not complete in time. Re-run parser and finish login/captcha first."
+            )
+
+    if not _login_complete(page):
+        raise RuntimeError(
+            "Not authenticated yet. Finish login/captcha in browser, then run again and press Enter."
+        )
+    _raise_if_challenge_detected(page, phase="manual_auth_after_login", allow_manual=True)
+    _save_session_state(page)
 
 
 def _human_scroll(page: Any) -> None:
@@ -1488,7 +1560,9 @@ def _process_deep_candidates(
 
 
 def run() -> None:
+    _log(f"{SOURCE}: run() start — importing Playwright (first time can take a minute)")
     from playwright.sync_api import sync_playwright
+    _log(f"{SOURCE}: Playwright import OK, opening browser (headless={BOLD_HEADLESS})")
 
     ai_usage_start = snapshot_ai_usage()
     store = BoldPrefilterStore(BOLD_PREFILTER_STORE_PATH)
@@ -1511,6 +1585,7 @@ def run() -> None:
         f"BOLD_TIMEOUT_MS={BOLD_TIMEOUT_MS}, "
         f"BOLD_FORCE_REFRESH={BOLD_FORCE_REFRESH}, "
         f"BOLD_RUN_MODE={BOLD_RUN_MODE!r}, "
+        f"BOLD_REQUIRE_MANUAL_AUTH={BOLD_REQUIRE_MANUAL_AUTH}, "
         f"BOLD_COLLECT_BATCH_SCROLL_STEPS={BOLD_COLLECT_BATCH_SCROLL_STEPS}, "
         f"SKIP_EXISTING_ON_LIST={SKIP_EXISTING_ON_LIST}, "
         f"DISCOVERY_MODE={DISCOVERY_MODE!r})"
@@ -1578,14 +1653,17 @@ def run() -> None:
         page.on("response", _response_handler_factory(state))
 
         try:
-            if context_kwargs.get("storage_state"):
-                page.goto(APP_SCHOLARSHIPS_URL, wait_until="domcontentloaded")
-                page.wait_for_timeout(1200)
-                if not _login_complete(page):
-                    _log(f"{SOURCE}: saved session invalid; performing fresh login")
-                    _login(page)
+            if BOLD_REQUIRE_MANUAL_AUTH:
+                _manual_auth_gate(page)
             else:
-                _login(page)
+                if context_kwargs.get("storage_state"):
+                    page.goto(APP_SCHOLARSHIPS_URL, wait_until="domcontentloaded")
+                    page.wait_for_timeout(1200)
+                    if not _login_complete(page):
+                        _log(f"{SOURCE}: saved session invalid; performing fresh login")
+                        _login(page)
+                else:
+                    _login(page)
             _visit_scholarship_pages(page, state)
             page.wait_for_timeout(1500)
             if not state.captured:
@@ -1927,4 +2005,5 @@ _CATEGORY_KEYS: tuple[str, ...] = (
 
 
 if __name__ == "__main__":
+    print("bold_org: __main__ → run()", file=sys.stderr, flush=True)
     run()
