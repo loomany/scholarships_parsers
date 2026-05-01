@@ -197,7 +197,7 @@ def _extract_detail(html: str) -> dict[str, Any]:
     current: str | None = None
     for line in lines:
         key = line.strip().lower()
-        if key in {"benefits", "benefit"}:
+        if key in {"benefits", "benefit", "scholarship", "award", "funding"}:
             current = "benefits"
             continue
         if key in {"eligibility", "eligibilities"}:
@@ -290,12 +290,28 @@ def _provider_from_title(title: str | None) -> str:
     return "Opportunity Desk"
 
 
+def _award_text_from_title(title: str | None) -> str | None:
+    text = title or ""
+    for chunk in re.findall(r"\(([^()]*)\)", text):
+        if re.search(r"[\$£€¥]\s*\d|\b\d{1,3}(?:,\d{3})+\b", chunk) and re.search(
+            r"\b(award|funding|grant|scholarship|stipend)\b",
+            chunk,
+            re.I,
+        ):
+            return _clean_text(chunk)
+    return None
+
+
 def _build_record(list_data: dict[str, Any], detail: dict[str, Any]) -> dict[str, Any]:
     title = detail.get("title") or list_data.get("title")
     deadline_text = detail.get("deadline_text") or list_data.get("deadline_text")
     benefits = detail.get("benefits_text")
     body = detail.get("body_text") or list_data.get("listing_text") or ""
-    award_text = benefits or ("Fully-funded" if re.search(r"fully[-\s]?funded", body, re.I) else None)
+    award_text = (
+        _award_text_from_title(title)
+        or benefits
+        or ("Fully-funded" if re.search(r"fully[-\s]?funded", body, re.I) else None)
+    )
     amin, amax = parse_award_min_max(award_text)
     deadline_date = _parse_deadline_date(deadline_text)
     description = _clean_text(body[:5000]) or list_data.get("listing_text") or title

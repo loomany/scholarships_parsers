@@ -38,6 +38,28 @@ _FUNDING_VOID = re.compile(
     re.I,
 )
 
+_AWARDS_STRONG_FUNDING_TEXT = re.compile(
+    r"\b("
+    r"(?:grant|award|scholarship|funding|stipend)\s+"
+    r"(?:covers?|includes?|provides?|offers?|supports?|funds?|pays?|reimburses?)|"
+    r"(?:covered|funded|paid|reimbursed)\s+by\s+"
+    r"(?:a\s+|an\s+|the\s+)?(?:grant|award|scholarship|funding|stipend)|"
+    r"(?:tuition|fees?|expenses?|costs?|living\s+expenses?)\s+"
+    r"(?:covered|funded|paid|reimbursed)"
+    r")\b",
+    re.I,
+)
+
+
+def _get_bool_env(name: str, default: bool = False) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+FUNDING_FILTER_STRICT = _get_bool_env("FUNDING_FILTER_STRICT", False)
+
 
 def _coerce_deadline_to_date(deadline_date: Any) -> date | None:
     if deadline_date is None:
@@ -102,8 +124,13 @@ def has_meaningful_funding(record: dict[str, Any]) -> bool:
     if awt:
         if text_has_high_value_award_signal(awt):
             return True
-        if len(awt) >= 8 and re.search(
-            r"[\$£€¥]|\d|\b(funding|award|stipend|grant|payment|remuneration)\b",
+        if re.search(r"[\$£€¥]|\d", awt):
+            return True
+        if FUNDING_FILTER_STRICT:
+            if _AWARDS_STRONG_FUNDING_TEXT.search(awt):
+                return True
+        elif len(awt) >= 8 and re.search(
+            r"\b(funding|award|stipend|grant|payment|remuneration)\b",
             awt,
             re.I,
         ):
@@ -116,10 +143,15 @@ def has_meaningful_funding(record: dict[str, Any]) -> bool:
         (record.get("winner_payment_text") or "")
         or (record.get("payment_details") or "")
     ).strip()
-    if len(wpt) >= 10:
+    if len(wpt) >= 10 and (
+        not FUNDING_FILTER_STRICT
+        or re.search(r"[\$£€¥]|\d", wpt)
+        or text_has_high_value_award_signal(wpt)
+        or _AWARDS_STRONG_FUNDING_TEXT.search(wpt)
+    ):
         return True
 
-    if is_authoritative_provider_hint(record):
+    if not FUNDING_FILTER_STRICT and is_authoritative_provider_hint(record):
         return True
 
     return False
