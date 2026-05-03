@@ -86,6 +86,9 @@ if APPILY_CDP_URL and "localhost" in urlparse(APPILY_CDP_URL).netloc:
     # Windows often resolves localhost to ::1; Chrome may listen on 127.0.0.1 only.
     APPILY_CDP_URL = APPILY_CDP_URL.replace("://localhost", "://127.0.0.1", 1)
 
+# Bare launch without stealth flags — use if arbitrary sites hang (diagnose antivirus / bad URL bar typos).
+APPILY_MINIMAL_LAUNCH = _get_bool_env("APPILY_MINIMAL_LAUNCH", False)
+
 
 TITLE_KEYS = ("title", "name", "scholarshipname", "scholarshiptitle", "displayname")
 URL_KEYS = ("url", "link", "href", "detailurl", "scholarshipurl", "canonicalurl", "externalurl")
@@ -422,7 +425,10 @@ def _save_session(page: Any) -> None:
 def _manual_auth_gate(page: Any) -> None:
     page.goto(SCHOLARSHIP_SEARCH_URL, wait_until="domcontentloaded")
     page.wait_for_timeout(1500)
-    _log(f"{SOURCE}: page loaded — sign in manually in Chromium, then Enter in this terminal.")
+    _log(
+        f"{SOURCE}: page loaded — sign in manually, then Enter. "
+        f"URLs must include https:// and no trailing dot after the domain."
+    )
 
     selectors = (
         'button:has-text("Accept")',
@@ -586,15 +592,16 @@ def run() -> None:
                     f"No browser contexts at {APPILY_CDP_URL}. Start Chrome first with remote debugging enabled."
                 )
             context = contexts_list[0]
-            _stealth_browser_context(context)
+            if not APPILY_MINIMAL_LAUNCH:
+                _stealth_browser_context(context)
             page = context.new_page()
         else:
-            # Without this, Google/Gmail often hang: default --enable-automation is easy to detect.
-            launch_kw: dict[str, Any] = {
-                "headless": APPILY_HEADLESS,
-                "ignore_default_args": ["--enable-automation"],
-                "args": ["--disable-blink-features=AutomationControlled"],
-            }
+            launch_kw: dict[str, Any] = {"headless": APPILY_HEADLESS}
+            if APPILY_MINIMAL_LAUNCH:
+                _log(f"{SOURCE}: APPILY_MINIMAL_LAUNCH=1 — only headless/channel; skip stealth tweaks")
+            else:
+                launch_kw["ignore_default_args"] = ["--enable-automation"]
+                launch_kw["args"] = ["--disable-blink-features=AutomationControlled"]
             if APPILY_PLAYWRIGHT_CHANNEL in {"chrome", "msedge", "chromium", "chrome-beta", "msedge-beta"}:
                 launch_kw["channel"] = APPILY_PLAYWRIGHT_CHANNEL
                 _log(f"{SOURCE}: using Playwright channel={APPILY_PLAYWRIGHT_CHANNEL!r} (better for login CAPTCHA)")
@@ -609,7 +616,8 @@ def run() -> None:
                 kw_ctx["storage_state"] = SESSION_STATE_PATH
                 _log(f"{SOURCE}: loading saved session -> {SESSION_STATE_PATH}")
             context = browser.new_context(**kw_ctx)
-            _stealth_browser_context(context)
+            if not APPILY_MINIMAL_LAUNCH:
+                _stealth_browser_context(context)
             page = context.new_page()
         page.set_default_timeout(APPILY_TIMEOUT_MS)
         page.on("response", _response_handler_factory(cap))
