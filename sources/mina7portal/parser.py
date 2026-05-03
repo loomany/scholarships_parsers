@@ -72,7 +72,7 @@ MINA7PORTAL_TIMEOUT_SECONDS = max(15, _get_int_env("MINA7PORTAL_TIMEOUT_SECONDS"
 MINA7PORTAL_MAX_RECORDS_DEBUG = max(0, _get_int_env("MINA7PORTAL_MAX_RECORDS_DEBUG", 0))
 MINA7PORTAL_SKIP_NOISY_JOBS = _get_bool_env("MINA7PORTAL_SKIP_NOISY_JOBS", True)
 
-# Listing walks in fixed-size waves (e.g. 50 pages → next 50…) up to MINA7PORTAL_MAX_LIST_PAGES — no streak-based early exit.
+# Crawl listing pages sequentially up to MINA7PORTAL_MAX_LIST_PAGES; optional progress log step MINA7PORTAL_LIST_CHUNK_PAGES.
 MINA7PORTAL_MAX_LIST_PAGES = max(1, _get_int_env("MINA7PORTAL_MAX_LIST_PAGES", 10000))
 MINA7PORTAL_LIST_CHUNK_PAGES = max(1, _get_int_env("MINA7PORTAL_LIST_CHUNK_PAGES", 50))
 
@@ -385,9 +385,11 @@ def _walk_type_slug(
     stats: dict[str, int],
     seen_urls: set[str],
 ) -> bool:
+    """One listing page at a time: NEW links → detail → business filters → upsert; then next page."""
     type_slug = type_slug.strip().lower()
     listing_cap = min(max(1, MAX_LIST_PAGES), MINA7PORTAL_MAX_LIST_PAGES)
-    chunk = MINA7PORTAL_LIST_CHUNK_PAGES
+    chunk = max(1, MINA7PORTAL_LIST_CHUNK_PAGES)
+
     for page_idx in range(1, listing_cap + 1):
         page_url = _listing_url(type_slug, page_idx)
         _log(f"{SOURCE}: [{type_slug}] page {page_idx}/{listing_cap} {page_url}")
@@ -402,6 +404,7 @@ def _walk_type_slug(
         if not candidates:
             _log(f"{SOURCE}: [{type_slug}] empty listing — stop this type")
             break
+
         for item in candidates:
             url = str(item.get("url") or "").strip()
             if not url or url in seen_urls:
@@ -461,8 +464,8 @@ def _walk_type_slug(
                 return True
 
         if page_idx % chunk == 0:
-            wave_start = page_idx - chunk + 1
-            _log(f"{SOURCE}: [{type_slug}] wave done pages {wave_start}-{page_idx}/{listing_cap} — continuing")
+            ws = page_idx - chunk + 1
+            _log(f"{SOURCE}: [{type_slug}] progress listings {ws}-{page_idx}/{listing_cap} processed")
     return False
 
 
@@ -473,7 +476,7 @@ def run() -> None:
 
     lp = MINA7PORTAL_MAX_LIST_PAGES
     ck = MINA7PORTAL_LIST_CHUNK_PAGES
-    _log(f"{SOURCE}: listing up to {lp} pages ({ck} pages per wave until cap; adds new URLs as found)")
+    _log(f"{SOURCE}: listings 1…{lp}; each page: NEW + filters → upsert; progress log every {ck} pages")
 
     idx = KnownScholarshipIndex()
     if SKIP_EXISTING_ON_LIST:
