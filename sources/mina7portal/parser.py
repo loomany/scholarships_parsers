@@ -71,6 +71,7 @@ MINA7PORTAL_REQUEST_DELAY_MS = max(0, _get_int_env("MINA7PORTAL_REQUEST_DELAY_MS
 MINA7PORTAL_TIMEOUT_SECONDS = max(15, _get_int_env("MINA7PORTAL_TIMEOUT_SECONDS", 55))
 MINA7PORTAL_MAX_RECORDS_DEBUG = max(0, _get_int_env("MINA7PORTAL_MAX_RECORDS_DEBUG", 0))
 MINA7PORTAL_SKIP_NOISY_JOBS = _get_bool_env("MINA7PORTAL_SKIP_NOISY_JOBS", True)
+MINA7PORTAL_VERBOSE_LISTING = _get_bool_env("MINA7PORTAL_VERBOSE_LISTING", False)
 
 # Crawl listing pages sequentially up to MINA7PORTAL_MAX_LIST_PAGES; optional progress log step MINA7PORTAL_LIST_CHUNK_PAGES.
 MINA7PORTAL_MAX_LIST_PAGES = max(1, _get_int_env("MINA7PORTAL_MAX_LIST_PAGES", 10000))
@@ -402,12 +403,20 @@ def _walk_type_slug(
         stats["discovery_pages"] = stats.get("discovery_pages", 0) + 1
         candidates = _extract_list_candidates(html, page_url, type_slug)
         if not candidates:
-            _log(f"{SOURCE}: [{type_slug}] empty listing — stop this type")
+            _log(f"{SOURCE}: [{type_slug}] empty listing - stop this type")
             break
+
+        n_cand = len(candidates)
+        page_run_dup = 0
+        page_known = 0
+        page_to_detail = 0
 
         for item in candidates:
             url = str(item.get("url") or "").strip()
-            if not url or url in seen_urls:
+            if not url:
+                continue
+            if url in seen_urls:
+                page_run_dup += 1
                 continue
             seen_urls.add(url)
             preview = {
@@ -418,8 +427,10 @@ def _walk_type_slug(
             }
             if SKIP_EXISTING_ON_LIST and listing_is_known(preview, idx, title_fallback=USE_TITLE_FALLBACK_KNOWN):
                 stats["known_skipped"] += 1
+                page_known += 1
                 continue
 
+            page_to_detail += 1
             stats["listing_seen"] += 1
 
             detail: dict[str, Any]
@@ -463,6 +474,12 @@ def _walk_type_slug(
             if MINA7PORTAL_MAX_RECORDS_DEBUG > 0 and stats["listing_seen"] >= MINA7PORTAL_MAX_RECORDS_DEBUG:
                 return True
 
+        if MINA7PORTAL_VERBOSE_LISTING:
+            _log(
+                f"{SOURCE}: [{type_slug}] page {page_idx} listing-detail: extracted={n_cand} dup_same_run={page_run_dup} "
+                f"already_in_catalog_skip_detail={page_known} new_need_detail_try={page_to_detail}"
+            )
+
         if page_idx % chunk == 0:
             ws = page_idx - chunk + 1
             _log(
@@ -480,7 +497,9 @@ def run() -> None:
 
     lp = MINA7PORTAL_MAX_LIST_PAGES
     ck = MINA7PORTAL_LIST_CHUNK_PAGES
-    _log(f"{SOURCE}: listings 1…{lp}; each page: NEW + filters → upsert; progress log every {ck} pages")
+    _log(f"{SOURCE}: listings 1..{lp}; each page: NEW + filters -> upsert; progress log every {ck} pages")
+    if MINA7PORTAL_VERBOSE_LISTING:
+        _log(f"{SOURCE}: MINA7PORTAL_VERBOSE_LISTING=1 - per-listing-page breakdown after each page")
 
     idx = KnownScholarshipIndex()
     if SKIP_EXISTING_ON_LIST:
