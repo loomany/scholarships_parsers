@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import socket
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -19,6 +20,64 @@ from scholarship_db_columns import SCHOLARSHIP_UPSERT_PAYLOAD_KEYS
 # Имена переменных окружения (как в Supabase Dashboard → Settings → API)
 ENV_URL = "SUPABASE_URL"
 ENV_KEY = "SUPABASE_SERVICE_ROLE_KEY"
+
+
+def _looks_like_dns_or_host_resolution(exc: BaseException) -> bool:
+    """Detect getaddrinfo / DNS failures from httpx/httpcore/supabase wrappers."""
+    seen: set[int] = set()
+    pending: list[BaseException | None] = [exc]
+
+    needle = (
+        "name or service not known",
+        "nodename nor servname",
+        "getaddrinfo failed",
+        "temporary failure in name resolution",
+        "could not translate host name",
+        "название не известно",  # rare localized Windows RU fragments
+    )
+
+    while pending:
+        e = pending.pop()
+        if not isinstance(e, BaseException):
+            continue
+        eid = id(e)
+        if eid in seen:
+            continue
+        seen.add(eid)
+        if isinstance(e, socket.gaierror):
+            return True
+        lowered = str(e).lower()
+        if any(snippet in lowered for snippet in needle):
+            return True
+        pending.extend(
+            (
+                getattr(e, "__cause__", None),
+                getattr(e, "__context__", None),
+            )
+        )
+    return False
+
+
+def _upsert_network_dns_hint_runtime_error(exc: BaseException) -> RuntimeError:
+    url = os.environ.get(ENV_URL, "").strip()
+    parsed = urlparse(url)
+    host = parsed.hostname or parsed.netloc or url or "(нет URL)"
+    ai_on = os.environ.get("SCHOLARSHIP_AI_FINAL_ENABLED", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    ai_note = ""
+    if ai_on:
+        ai_note = (
+            " Включена SCHOLARSHIP_AI_FINAL_ENABLED: возможен также сбой DNS до API OpenAI."
+        )
+    return RuntimeError(
+        f"Сбой DNS/имени хоста при записи в БД или при AI-финализации.{ai_note} "
+        f"Проверьте {ENV_URL} (хост {host!r}, ожидается *.supabase.co из Dashboard → API), "
+        "интернет, VPN и DNS. "
+        f"Исходное исключение: {exc!r}"
+    )
 
 
 def get_client() -> Client:
@@ -284,6 +343,15 @@ def upsert_scholarship(record: Mapping[str, Any]) -> dict[str, Any]:
     if "source" not in record or "url" not in record or "title" not in record:
         raise ValueError("В record обязательны ключи: source, url, title")
 
+    try:
+        return _upsert_scholarship_connected(record)
+    except Exception as exc:
+        if _looks_like_dns_or_host_resolution(exc):
+            raise _upsert_network_dns_hint_runtime_error(exc) from exc
+        raise
+
+
+def _upsert_scholarship_connected(record: Mapping[str, Any]) -> dict[str, Any]:
     client = get_client()
     prepared = dict(record)
     source = str(prepared["source"]).strip()
@@ -366,3 +434,4 @@ def upsert_scholarship(record: Mapping[str, Any]) -> dict[str, Any]:
     if not rows:
         raise RuntimeError("UPDATE не удалось подтвердить.")
     return rows[0]
+

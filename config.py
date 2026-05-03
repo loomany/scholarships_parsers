@@ -58,6 +58,8 @@ SOURCE_ALIASES: dict[str, str] = {
     "iefa": "iefa",
     "wemakescholars": "wemakescholars",
     "wms": "wemakescholars",
+    "oneyoungworld": "oneyoungworld",
+    "oyw": "oneyoungworld",
 }
 
 CANONICAL_SOURCE_KEYS: tuple[str, ...] = (
@@ -75,6 +77,7 @@ CANONICAL_SOURCE_KEYS: tuple[str, ...] = (
     "ed_gov_html",
     "uoregon_research_html",
     "wemakescholars",
+    "oneyoungworld",
 )
 
 
@@ -305,6 +308,8 @@ def source_enabled(canonical_key: str) -> bool:
         return get_bool("IEFA_ENABLED", False)
     if canonical_key == "wemakescholars":
         return get_bool("WEMAKE_SCHOLARS_ENABLED", False)
+    if canonical_key == "oneyoungworld":
+        return get_bool("ONEYOUNGWORLD_ENABLED", False)
     return True
 
 

@@ -67,6 +67,7 @@ _SOURCE_MODULES: dict[str, tuple[str, str]] = {
     "ed_gov_html": ("ED.gov Grants Page", "sources.ed_gov_html"),
     "uoregon_research_html": ("UOregon External Funding", "sources.uoregon_research_html"),
     "wemakescholars": ("WeMakeScholars", "sources.wemakescholars"),
+    "oneyoungworld": ("One Young World", "sources.oneyoungworld"),
 }
 # Каждый ключ — пакет с __init__.py, экспортирующим run (см. sources/<key>/parser.py).
 
@@ -85,6 +86,7 @@ _SOURCE_DOMAINS: dict[str, str] = {
     "ed_gov_html": "ed.gov",
     "uoregon_research_html": "research.uoregon.edu",
     "wemakescholars": "wemakescholars.com",
+    "oneyoungworld": "oneyoungworld.com",
 }
 
 
@@ -144,7 +146,7 @@ def main() -> None:
             f"Источников в запуске: {len(names)}",
             *([f"- {x}" for x in names] or ["- none"]),
             "Браузер: открыт (headful) для BigFuture/Bold/Scholarships.com/Mastersportal, "
-            "если не задан RUN_ALL_ALLOW_HEADLESS=1. IEFA — только лог в терминале.",
+            "если не задан RUN_ALL_ALLOW_HEADLESS=1. IEFA — HTTP по умолчанию, только лог в терминале.",
             "",
             "Статус: выполняется...",
         ]
