@@ -49,3 +49,4 @@
 | `ed_gov_html` | `sources/ed_gov_html/` |
 | `uoregon_research_html` | `sources/uoregon_research_html/` |
 | `oneyoungworld` | `sources/oneyoungworld/` |
+| `mina7portal` | `sources/mina7portal/` |

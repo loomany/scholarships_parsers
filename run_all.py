@@ -68,6 +68,7 @@ _SOURCE_MODULES: dict[str, tuple[str, str]] = {
     "uoregon_research_html": ("UOregon External Funding", "sources.uoregon_research_html"),
     "wemakescholars": ("WeMakeScholars", "sources.wemakescholars"),
     "oneyoungworld": ("One Young World", "sources.oneyoungworld"),
+    "mina7portal": ("Mina7 Portal", "sources.mina7portal"),
 }
 # Каждый ключ — пакет с __init__.py, экспортирующим run (см. sources/<key>/parser.py).
 
@@ -87,6 +88,7 @@ _SOURCE_DOMAINS: dict[str, str] = {
     "uoregon_research_html": "research.uoregon.edu",
     "wemakescholars": "wemakescholars.com",
     "oneyoungworld": "oneyoungworld.com",
+    "mina7portal": "mina7portal.com",
 }
 
 
