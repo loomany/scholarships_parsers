@@ -82,6 +82,9 @@ APPILY_DOM_FALLBACK = _get_bool_env("APPILY_DOM_FALLBACK", True)
 # Installed Chrome/Edge often renders login CAPTCHA iframes; bundled Chromium may show "Must complete CAPTCHA" with no widget.
 APPILY_PLAYWRIGHT_CHANNEL = (_get_str_env("APPILY_PLAYWRIGHT_CHANNEL").lower() or "")
 APPILY_CDP_URL = _get_str_env("APPILY_CDP_URL").rstrip("/")
+if APPILY_CDP_URL and "localhost" in urlparse(APPILY_CDP_URL).netloc:
+    # Windows often resolves localhost to ::1; Chrome may listen on 127.0.0.1 only.
+    APPILY_CDP_URL = APPILY_CDP_URL.replace("://localhost", "://127.0.0.1", 1)
 
 
 TITLE_KEYS = ("title", "name", "scholarshipname", "scholarshiptitle", "displayname")
@@ -557,7 +560,15 @@ def run() -> None:
         context: Any
         if APPILY_CDP_URL:
             _log(f"{SOURCE}: attaching to existing browser CDP={APPILY_CDP_URL!r}")
-            browser = pw.chromium.connect_over_cdp(APPILY_CDP_URL)
+            try:
+                browser = pw.chromium.connect_over_cdp(APPILY_CDP_URL)
+            except Exception as exc:
+                _log(
+                    f"{SOURCE}: CDP connect failed ({exc}). "
+                    f"Chrome must already be running, e.g. chrome.exe --remote-debugging-port=9222 "
+                    f"(leave that window open). Or unset APPILY_CDP_URL and use APPILY_PLAYWRIGHT_CHANNEL=chrome."
+                )
+                raise
             contexts_list = getattr(browser, "contexts", None) or []
             if not contexts_list:
                 browser.close()
