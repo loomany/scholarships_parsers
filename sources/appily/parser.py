@@ -22,6 +22,11 @@ _PARSER_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 if _PARSER_ROOT not in sys.path:
     sys.path.insert(0, _PARSER_ROOT)
 
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(_PARSER_ROOT, ".env"))
+load_dotenv(os.path.join(os.path.dirname(_PARSER_ROOT), ".env"))
+
 from business_filters import classify_business_deadline, has_meaningful_funding
 from config import get_global_config
 from normalize_scholarship import apply_normalization
