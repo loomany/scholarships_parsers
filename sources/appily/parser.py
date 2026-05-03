@@ -64,6 +64,10 @@ def _get_int_env(name: str, default: int) -> int:
         return default
 
 
+def _get_str_env(name: str, default: str = "") -> str:
+    return (os.getenv(name) or default).strip()
+
+
 APPILY_ENABLED = _get_bool_env("APPILY_ENABLED", False)
 APPILY_HEADLESS = _get_bool_env("APPILY_HEADLESS", False)
 APPILY_REQUIRE_MANUAL_AUTH = _get_bool_env("APPILY_REQUIRE_MANUAL_AUTH", True)
@@ -74,6 +78,8 @@ APPILY_NO_NEW_ROUNDS_STOP = max(1, _get_int_env("APPILY_NO_NEW_ROUNDS_STOP", 8))
 APPILY_AUTH_WAIT_SECONDS = max(60, _get_int_env("APPILY_AUTH_WAIT_SECONDS", 900))
 APPILY_MAX_RECORDS_DEBUG = max(0, _get_int_env("APPILY_MAX_RECORDS_DEBUG", 0))
 APPILY_DOM_FALLBACK = _get_bool_env("APPILY_DOM_FALLBACK", True)
+# Installed Chrome/Edge often renders login CAPTCHA iframes; bundled Chromium may show "Must complete CAPTCHA" with no widget.
+APPILY_PLAYWRIGHT_CHANNEL = (_get_str_env("APPILY_PLAYWRIGHT_CHANNEL").lower() or "")
 
 
 TITLE_KEYS = ("title", "name", "scholarshipname", "scholarshiptitle", "displayname")
@@ -545,7 +551,16 @@ def run() -> None:
     cap = _CaptureState()
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=APPILY_HEADLESS)
+        launch_kw: dict[str, Any] = {"headless": APPILY_HEADLESS}
+        if APPILY_PLAYWRIGHT_CHANNEL in {"chrome", "msedge", "chromium", "chrome-beta", "msedge-beta"}:
+            launch_kw["channel"] = APPILY_PLAYWRIGHT_CHANNEL
+            _log(f"{SOURCE}: using Playwright channel={APPILY_PLAYWRIGHT_CHANNEL!r} (better for login CAPTCHA)")
+        else:
+            _log(
+                f"{SOURCE}: bundled Chromium (set APPILY_PLAYWRIGHT_CHANNEL=chrome if login shows "
+                f'\"Must complete CAPTCHA\" but no widget)'
+            )
+        browser = pw.chromium.launch(**launch_kw)
         kw: dict[str, Any] = {}
         if os.path.isfile(SESSION_STATE_PATH):
             kw["storage_state"] = SESSION_STATE_PATH
