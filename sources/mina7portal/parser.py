@@ -73,6 +73,20 @@ MINA7PORTAL_TIMEOUT_SECONDS = max(15, _get_int_env("MINA7PORTAL_TIMEOUT_SECONDS"
 MINA7PORTAL_MAX_RECORDS_DEBUG = max(0, _get_int_env("MINA7PORTAL_MAX_RECORDS_DEBUG", 0))
 MINA7PORTAL_SKIP_NOISY_JOBS = _get_bool_env("MINA7PORTAL_SKIP_NOISY_JOBS", True)
 
+# When global NO_NEW_PAGES_STOP=0 the listing loop never breaks on «all links already known».
+# Override with MINA7PORTAL_NO_NEW_PAGES_STOP; if unset we use global when > 0, else default 50.
+def _mina7_effective_no_new_pages_stop(global_stop: int) -> int:
+    raw = os.getenv("MINA7PORTAL_NO_NEW_PAGES_STOP")
+    if raw is not None and str(raw).strip() != "":
+        try:
+            return max(0, int(str(raw).strip()))
+        except ValueError:
+            pass
+    return global_stop if global_stop > 0 else 50
+
+
+MINA7PORTAL_LIST_NO_NEW_STOP = _mina7_effective_no_new_pages_stop(NO_NEW_PAGES_STOP)
+
 MINA7_LOCALE = (os.getenv("MINA7PORTAL_LOCALE") or os.getenv("MINA7_LOCALE") or "en").strip().lower().replace("/", "") or "en"
 
 _NOISY_TITLE_RE = re.compile(
@@ -460,8 +474,10 @@ def _walk_type_slug(
 
         if new_on_page == 0:
             no_new_pages += 1
-            _log(f"{SOURCE}: [{type_slug}] no NEW on page ({no_new_pages}/{NO_NEW_PAGES_STOP})")
-            if NO_NEW_PAGES_STOP > 0 and no_new_pages >= NO_NEW_PAGES_STOP:
+            cap = MINA7PORTAL_LIST_NO_NEW_STOP
+            cap_s = str(cap) if cap > 0 else "off"
+            _log(f"{SOURCE}: [{type_slug}] no NEW on page ({no_new_pages}/{cap_s})")
+            if cap > 0 and no_new_pages >= cap:
                 break
         else:
             no_new_pages = 0
@@ -472,6 +488,15 @@ def run() -> None:
     if not MINA7PORTAL_ENABLED:
         _log(f"{SOURCE}: OFF (MINA7PORTAL_ENABLED=0)")
         return
+
+    _log(
+        f"{SOURCE}: consecutive no-new-pages stop="
+        + (
+            str(MINA7PORTAL_LIST_NO_NEW_STOP)
+            if MINA7PORTAL_LIST_NO_NEW_STOP > 0
+            else "off (crawls until MAX_LIST_PAGES)"
+        )
+    )
 
     idx = KnownScholarshipIndex()
     if SKIP_EXISTING_ON_LIST:
