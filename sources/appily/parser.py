@@ -1,7 +1,8 @@
 """Appily (my.appily.com) scholarship search -> public.scholarships (Supabase).
 
-Playwright opens the authenticated search UI. You complete login/password in the
-browser, press Enter in the terminal (TTY), then the parser scrolls/collects JSON
+Playwright opens the authenticated search UI (or attaches to Chrome via APPILY_CDP_URL).
+You complete login/password in the browser, press Enter in the terminal (TTY), then the
+parser scrolls/collects JSON
 from network responses and upserts normalized records — same ergonomics pattern as
 sources.bold_org manual auth gate.
 """
@@ -80,6 +81,7 @@ APPILY_MAX_RECORDS_DEBUG = max(0, _get_int_env("APPILY_MAX_RECORDS_DEBUG", 0))
 APPILY_DOM_FALLBACK = _get_bool_env("APPILY_DOM_FALLBACK", True)
 # Installed Chrome/Edge often renders login CAPTCHA iframes; bundled Chromium may show "Must complete CAPTCHA" with no widget.
 APPILY_PLAYWRIGHT_CHANNEL = (_get_str_env("APPILY_PLAYWRIGHT_CHANNEL").lower() or "")
+APPILY_CDP_URL = _get_str_env("APPILY_CDP_URL").rstrip("/")
 
 
 TITLE_KEYS = ("title", "name", "scholarshipname", "scholarshiptitle", "displayname")
@@ -551,22 +553,36 @@ def run() -> None:
     cap = _CaptureState()
 
     with sync_playwright() as pw:
-        launch_kw: dict[str, Any] = {"headless": APPILY_HEADLESS}
-        if APPILY_PLAYWRIGHT_CHANNEL in {"chrome", "msedge", "chromium", "chrome-beta", "msedge-beta"}:
-            launch_kw["channel"] = APPILY_PLAYWRIGHT_CHANNEL
-            _log(f"{SOURCE}: using Playwright channel={APPILY_PLAYWRIGHT_CHANNEL!r} (better for login CAPTCHA)")
+        browser: Any
+        context: Any
+        if APPILY_CDP_URL:
+            _log(f"{SOURCE}: attaching to existing browser CDP={APPILY_CDP_URL!r}")
+            browser = pw.chromium.connect_over_cdp(APPILY_CDP_URL)
+            contexts_list = getattr(browser, "contexts", None) or []
+            if not contexts_list:
+                browser.close()
+                raise RuntimeError(
+                    f"No browser contexts at {APPILY_CDP_URL}. Start Chrome first with remote debugging enabled."
+                )
+            context = contexts_list[0]
+            page = context.new_page()
         else:
-            _log(
-                f"{SOURCE}: bundled Chromium (set APPILY_PLAYWRIGHT_CHANNEL=chrome if login shows "
-                f'\"Must complete CAPTCHA\" but no widget)'
-            )
-        browser = pw.chromium.launch(**launch_kw)
-        kw: dict[str, Any] = {}
-        if os.path.isfile(SESSION_STATE_PATH):
-            kw["storage_state"] = SESSION_STATE_PATH
-            _log(f"{SOURCE}: loading saved session -> {SESSION_STATE_PATH}")
-        context = browser.new_context(**kw)
-        page = context.new_page()
+            launch_kw: dict[str, Any] = {"headless": APPILY_HEADLESS}
+            if APPILY_PLAYWRIGHT_CHANNEL in {"chrome", "msedge", "chromium", "chrome-beta", "msedge-beta"}:
+                launch_kw["channel"] = APPILY_PLAYWRIGHT_CHANNEL
+                _log(f"{SOURCE}: using Playwright channel={APPILY_PLAYWRIGHT_CHANNEL!r} (better for login CAPTCHA)")
+            else:
+                _log(
+                    f"{SOURCE}: bundled Chromium (set APPILY_PLAYWRIGHT_CHANNEL=chrome if login shows "
+                    f'\"Must complete CAPTCHA\" but no widget)'
+                )
+            browser = pw.chromium.launch(**launch_kw)
+            kw_ctx: dict[str, Any] = {}
+            if os.path.isfile(SESSION_STATE_PATH):
+                kw_ctx["storage_state"] = SESSION_STATE_PATH
+                _log(f"{SOURCE}: loading saved session -> {SESSION_STATE_PATH}")
+            context = browser.new_context(**kw_ctx)
+            page = context.new_page()
         page.set_default_timeout(APPILY_TIMEOUT_MS)
         page.on("response", _response_handler_factory(cap))
 
