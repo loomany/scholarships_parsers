@@ -465,7 +465,11 @@ def _walk_type_slug(
 
         if page_idx % chunk == 0:
             ws = page_idx - chunk + 1
-            _log(f"{SOURCE}: [{type_slug}] progress listings {ws}-{page_idx}/{listing_cap} processed")
+            _log(
+                f"{SOURCE}: [{type_slug}] progress listings {ws}-{page_idx}/{listing_cap} "
+                f"| known_skipped={stats['known_skipped']} new_tried_detail={stats['listing_seen']} "
+                f"upsert_ok={stats['upsert_ok']} skip_funding={stats['skip_no_funding']} skip_deadline={stats['skip_deadline']}"
+            )
     return False
 
 
@@ -483,6 +487,10 @@ def run() -> None:
         try:
             idx = load_known_scholarship_index(get_client(), SOURCE)
             _log(f"{SOURCE}: known urls={len(idx.urls)} ids={len(idx.source_ids)} titles={len(idx.titles_norm)}")
+            _log(
+                f"{SOURCE}: already-in-DB URLs on listing skip detail fetch "
+                "(no upsert_ok until a genuinely NEW link)"
+            )
         except Exception as exc:
             _log(f"{SOURCE}: known index warning: {exc}")
 
