@@ -66,6 +66,7 @@ _SOURCE_MODULES: dict[str, tuple[str, str]] = {
     "iefa": ("IEFA.org", "sources.iefa"),
     "ed_gov_html": ("ED.gov Grants Page", "sources.ed_gov_html"),
     "uoregon_research_html": ("UOregon External Funding", "sources.uoregon_research_html"),
+    "wemakescholars": ("WeMakeScholars", "sources.wemakescholars"),
 }
 # Каждый ключ — пакет с __init__.py, экспортирующим run (см. sources/<key>/parser.py).
 
@@ -83,6 +84,7 @@ _SOURCE_DOMAINS: dict[str, str] = {
     "iefa": "iefa.org",
     "ed_gov_html": "ed.gov",
     "uoregon_research_html": "research.uoregon.edu",
+    "wemakescholars": "wemakescholars.com",
 }
 
 
@@ -141,8 +143,8 @@ def main() -> None:
             f"Режим: {gc.parser_mode or 'sources'}",
             f"Источников в запуске: {len(names)}",
             *([f"- {x}" for x in names] or ["- none"]),
-            "Браузер: открыт (headful) для BigFuture/Bold/Scholarships.com, "
-        "если не задан RUN_ALL_ALLOW_HEADLESS=1. IEFA — только лог в терминале.",
+            "Браузер: открыт (headful) для BigFuture/Bold/Scholarships.com/Mastersportal, "
+            "если не задан RUN_ALL_ALLOW_HEADLESS=1. IEFA — только лог в терминале.",
             "",
             "Статус: выполняется...",
         ]
@@ -231,7 +233,7 @@ def main() -> None:
         f"Ручная проверка доменов: {len(manual_check)}",
         *(manual_check or ["- none"]),
         "",
-        "Браузер: headful для BigFuture/Bold/Scholarships.com; IEFA — окно Chromium "
+        "Браузер: headful для BigFuture/Bold/Scholarships.com/Mastersportal; IEFA — окно Chromium "
         "только при IEFA_VISIBLE_BROWSER=1 (иначе HTTP без окна). "
         "Лог: PYTHONUNBUFFERED / python -u.",
     ]

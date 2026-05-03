@@ -3,6 +3,7 @@
 .env.*.local
 .venv/
 .mastersportal_browser_profile/
+.findamasters_browser_profile/
 __pycache__/
 *.py[cod]
 *$py.class
