@@ -98,6 +98,16 @@ def _log(msg: str) -> None:
     print(msg, flush=True)
 
 
+def _stealth_browser_context(context: Any) -> None:
+    """Reduce Google / OAuth \"verify in browser\" breakage under Playwright."""
+    try:
+        context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});",
+        )
+    except Exception:
+        pass
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -576,12 +586,14 @@ def run() -> None:
                     f"No browser contexts at {APPILY_CDP_URL}. Start Chrome first with remote debugging enabled."
                 )
             context = contexts_list[0]
+            _stealth_browser_context(context)
             page = context.new_page()
         else:
             # Without this, Google/Gmail often hang: default --enable-automation is easy to detect.
             launch_kw: dict[str, Any] = {
                 "headless": APPILY_HEADLESS,
                 "ignore_default_args": ["--enable-automation"],
+                "args": ["--disable-blink-features=AutomationControlled"],
             }
             if APPILY_PLAYWRIGHT_CHANNEL in {"chrome", "msedge", "chromium", "chrome-beta", "msedge-beta"}:
                 launch_kw["channel"] = APPILY_PLAYWRIGHT_CHANNEL
@@ -597,6 +609,7 @@ def run() -> None:
                 kw_ctx["storage_state"] = SESSION_STATE_PATH
                 _log(f"{SOURCE}: loading saved session -> {SESSION_STATE_PATH}")
             context = browser.new_context(**kw_ctx)
+            _stealth_browser_context(context)
             page = context.new_page()
         page.set_default_timeout(APPILY_TIMEOUT_MS)
         page.on("response", _response_handler_factory(cap))
