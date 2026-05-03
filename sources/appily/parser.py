@@ -578,7 +578,11 @@ def run() -> None:
             context = contexts_list[0]
             page = context.new_page()
         else:
-            launch_kw: dict[str, Any] = {"headless": APPILY_HEADLESS}
+            # Without this, Google/Gmail often hang: default --enable-automation is easy to detect.
+            launch_kw: dict[str, Any] = {
+                "headless": APPILY_HEADLESS,
+                "ignore_default_args": ["--enable-automation"],
+            }
             if APPILY_PLAYWRIGHT_CHANNEL in {"chrome", "msedge", "chromium", "chrome-beta", "msedge-beta"}:
                 launch_kw["channel"] = APPILY_PLAYWRIGHT_CHANNEL
                 _log(f"{SOURCE}: using Playwright channel={APPILY_PLAYWRIGHT_CHANNEL!r} (better for login CAPTCHA)")
