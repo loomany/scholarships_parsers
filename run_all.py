@@ -37,6 +37,7 @@ if os.environ.get("RUN_ALL_ALLOW_HEADLESS", "").strip().lower() not in (
     os.environ["BOLD_HEADLESS"] = "0"
     os.environ["SCHOLARSHIPS_COM_HEADLESS"] = "0"
     os.environ["MASTERSPORTAL_HEADLESS"] = "0"
+    os.environ["APPILY_HEADLESS"] = "0"
 # Держим окно открытым на протяжении выполнения, но не блокируем завершение бесконечным "hold open".
 os.environ["BOLD_KEEP_BROWSER_OPEN"] = "0"
 os.environ["SCHOLARSHIPS_COM_KEEP_BROWSER_OPEN"] = "0"
@@ -69,6 +70,7 @@ _SOURCE_MODULES: dict[str, tuple[str, str]] = {
     "wemakescholars": ("WeMakeScholars", "sources.wemakescholars"),
     "oneyoungworld": ("One Young World", "sources.oneyoungworld"),
     "mina7portal": ("Mina7 Portal", "sources.mina7portal"),
+    "appily": ("Appily (Cappex successor)", "sources.appily"),
 }
 # Каждый ключ — пакет с __init__.py, экспортирующим run (см. sources/<key>/parser.py).
 
@@ -89,6 +91,7 @@ _SOURCE_DOMAINS: dict[str, str] = {
     "wemakescholars": "wemakescholars.com",
     "oneyoungworld": "oneyoungworld.com",
     "mina7portal": "mina7portal.com",
+    "appily": "appily.com",
 }
 
 
