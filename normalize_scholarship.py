@@ -1215,7 +1215,8 @@ def apply_normalization(record: dict[str, Any]) -> None:
         cleaned = _clean_requirements_line(str(rt0)) if rt0 else ""
         record["requirements_text_clean"] = cleaned.strip() or None
 
-    record["official_source_name"] = (
+    official_source = str(record.get("official_source_name") or "").strip()
+    record["official_source_name"] = official_source or (
         record.get("source") or "catalog"
     ).replace("_", " ").title()
 

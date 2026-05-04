@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from typing import Any, Iterable
+from urllib.parse import urlparse
 
 
 _UNRESTRICTED_RE = re.compile(
@@ -179,6 +180,133 @@ def _unique_codes(values: Iterable[Any]) -> list[str]:
     return out
 
 
+_TRUSTED_CCTLD_TO_CODE: dict[str, str] = {
+    "ac": "GB",
+    "at": "AT",
+    "au": "AU",
+    "be": "BE",
+    "br": "BR",
+    "ca": "CA",
+    "ch": "CH",
+    "cl": "CL",
+    "cn": "CN",
+    "co": "CO",
+    "de": "DE",
+    "dk": "DK",
+    "es": "ES",
+    "fi": "FI",
+    "fr": "FR",
+    "gb": "GB",
+    "hk": "HK",
+    "ie": "IE",
+    "il": "IL",
+    "in": "IN",
+    "it": "IT",
+    "jp": "JP",
+    "kr": "KR",
+    "mx": "MX",
+    "nl": "NL",
+    "no": "NO",
+    "nz": "NZ",
+    "pl": "PL",
+    "pt": "PT",
+    "ru": "RU",
+    "se": "SE",
+    "sg": "SG",
+    "tr": "TR",
+    "tw": "TW",
+    "ua": "UA",
+    "uk": "GB",
+    "us": "US",
+    "za": "ZA",
+}
+
+_US_DOMAIN_TLDS = {"edu", "gov", "mil"}
+_GENERIC_TLDS = {"com", "org", "net", "info", "biz", "io", "ai", "co"}
+
+_US_STATE_NAME_RE = re.compile(
+    r"\b("
+    r"alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|"
+    r"florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|"
+    r"louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|"
+    r"missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|"
+    r"new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|"
+    r"rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|"
+    r"virginia|washington|west virginia|wisconsin|wyoming|district of columbia|"
+    r"puerto rico|guam|american samoa|u\.?s\.? virgin islands|united states|"
+    r"united states of america|usa|u\.s\.a?\.?"
+    r")\b",
+    re.I,
+)
+
+
+def _raw_data_dict(record: dict[str, Any]) -> dict[str, Any]:
+    raw = record.get("raw_data")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _hostname_from_url(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.startswith("//"):
+        text = f"https:{text}"
+    parsed = urlparse(text)
+    if not parsed.scheme and "." in parsed.path.split("/", 1)[0]:
+        parsed = urlparse(f"https://{text.lstrip('/')}")
+    host = (parsed.hostname or "").lower().strip(".")
+    return host or None
+
+
+def _host_code_from_hostname(hostname: str | None) -> tuple[str | None, str | None]:
+    if not hostname:
+        return None, None
+    labels = [p for p in hostname.lower().split(".") if p]
+    if not labels:
+        return None, None
+    tld = labels[-1]
+    if tld in _US_DOMAIN_TLDS:
+        return "US", tld
+    if tld in _GENERIC_TLDS:
+        return None, tld
+    return _TRUSTED_CCTLD_TO_CODE.get(tld), tld
+
+
+def _domain_host_signals(record: dict[str, Any]) -> list[dict[str, str]]:
+    signals: list[dict[str, str]] = []
+    for key in ("provider_url", "apply_url", "url"):
+        host = _hostname_from_url(record.get(key))
+        code, tld = _host_code_from_hostname(host)
+        if code and host and tld:
+            signals.append({"field": key, "hostname": host, "tld": tld, "code": code})
+    return signals
+
+
+def _state_text_implies_us(value: Any) -> bool:
+    text = str(value or "").strip()
+    return bool(text and _US_STATE_NAME_RE.search(text))
+
+
+def _merge_host_enrichment_raw_data(
+    record: dict[str, Any],
+    *,
+    status: str,
+    method: str,
+    host_codes: list[str],
+    signals: dict[str, Any],
+    confidence: str,
+) -> None:
+    raw = _raw_data_dict(record)
+    raw["host_enrichment"] = {
+        "status": status,
+        "method": method,
+        "host_country_codes": host_codes,
+        "signals": signals,
+        "confidence": confidence,
+    }
+    record["raw_data"] = raw
+
+
 _ALIAS_TO_CODE: dict[str, str] = {}
 for _row in _COUNTRY_ALIAS_ROWS.splitlines():
     _parts = [p.strip() for p in _row.split("|") if p.strip()]
@@ -257,6 +385,8 @@ def apply_country_eligibility(record: dict[str, Any]) -> None:
     applicant_codes = _unique_codes(record.get("applicant_country_codes") or [])
     host_codes = _unique_codes(record.get("host_country_codes") or [])
     notes: list[str] = [str(x).strip() for x in (record.get("country_eligibility_notes") or []) if str(x).strip()]
+    signals: dict[str, Any] = {}
+    evidence_method = "none"
 
     source = str(record.get("source") or "").strip().lower()
     if source == "iefa":
@@ -268,6 +398,12 @@ def apply_country_eligibility(record: dict[str, Any]) -> None:
         if iefa_host:
             host_codes.extend(iefa_host)
             notes.append("IEFA host countries")
+            signals["source_metadata"] = {
+                "source": "iefa",
+                "host_country_names": record.get("host_country_names") or [],
+                "host_country_codes": _unique_codes(iefa_host),
+            }
+            evidence_method = "source_metadata"
 
     if source != "iefa":
         applicant_blob = "\n".join(
@@ -286,7 +422,59 @@ def apply_country_eligibility(record: dict[str, Any]) -> None:
         if text_host:
             host_codes.extend(text_host)
             notes.append("host country text")
+            signals["existing_text"] = {"host_country_codes": _unique_codes(text_host)}
+            evidence_method = "existing_text"
 
-    record["applicant_country_codes"] = _unique_codes(applicant_codes)
-    record["host_country_codes"] = _unique_codes(host_codes)
+    explicit_host = _unique_codes(record.get("host_country_codes") or [])
+    if explicit_host:
+        signals.setdefault("source_metadata", {})
+        signals["source_metadata"]["explicit_host_country_codes"] = explicit_host
+        if evidence_method == "none":
+            evidence_method = "source_metadata"
+
+    state_codes = _unique_codes(record.get("state_codes") or [])
+    if not host_codes and state_codes:
+        host_codes.append("US")
+        signals["state_codes"] = state_codes
+        notes.append("host country inferred from state_codes")
+        evidence_method = "state_codes"
+
+    state_text = record.get("state_territory_text")
+    if not host_codes and _state_text_implies_us(state_text):
+        host_codes.append("US")
+        signals["state_territory_text"] = str(state_text or "").strip()
+        notes.append("host country inferred from state_territory_text")
+        evidence_method = "state_text"
+
+    if not host_codes:
+        domain_signals = _domain_host_signals(record)
+        domain_codes = _unique_codes(sig.get("code") for sig in domain_signals)
+        if len(domain_codes) == 1:
+            host_codes.extend(domain_codes)
+            signals["domains"] = domain_signals
+            notes.append("host country inferred from trusted domain TLD")
+            evidence_method = "domain_tld"
+        elif domain_signals:
+            signals["domains"] = domain_signals
+
+    final_host_codes = _unique_codes(host_codes)
+    host_set = set(final_host_codes)
+    # Host wins: applicant eligibility should not duplicate the host-country facet.
+    final_applicant_codes = [
+        code for code in _unique_codes(applicant_codes) if code not in host_set
+    ]
+    if len(final_applicant_codes) != len(_unique_codes(applicant_codes)):
+        notes.append("host/applicant country overlap removed")
+
+    record["applicant_country_codes"] = final_applicant_codes
+    record["host_country_codes"] = final_host_codes
     record["country_eligibility_notes"] = list(dict.fromkeys(notes))
+
+    _merge_host_enrichment_raw_data(
+        record,
+        status="inferred" if final_host_codes else "unknown",
+        method=evidence_method if final_host_codes else "none",
+        host_codes=final_host_codes,
+        signals=signals,
+        confidence="high" if final_host_codes else "none",
+    )

@@ -38,6 +38,7 @@ if os.environ.get("RUN_ALL_ALLOW_HEADLESS", "").strip().lower() not in (
     os.environ["SCHOLARSHIPS_COM_HEADLESS"] = "0"
     os.environ["MASTERSPORTAL_HEADLESS"] = "0"
     os.environ["APPILY_HEADLESS"] = "0"
+    os.environ["UNIGO_HEADLESS"] = "0"
 # Держим окно открытым на протяжении выполнения, но не блокируем завершение бесконечным "hold open".
 os.environ["BOLD_KEEP_BROWSER_OPEN"] = "0"
 os.environ["SCHOLARSHIPS_COM_KEEP_BROWSER_OPEN"] = "0"
@@ -71,6 +72,7 @@ _SOURCE_MODULES: dict[str, tuple[str, str]] = {
     "oneyoungworld": ("One Young World", "sources.oneyoungworld"),
     "mina7portal": ("Mina7 Portal", "sources.mina7portal"),
     "appily": ("Appily (Cappex successor)", "sources.appily"),
+    "unigo": ("Unigo", "sources.unigo"),
 }
 # Каждый ключ — пакет с __init__.py, экспортирующим run (см. sources/<key>/parser.py).
 
@@ -92,6 +94,7 @@ _SOURCE_DOMAINS: dict[str, str] = {
     "oneyoungworld": "oneyoungworld.com",
     "mina7portal": "mina7portal.com",
     "appily": "appily.com",
+    "unigo": "unigo.com",
 }
 
 
@@ -150,7 +153,7 @@ def main() -> None:
             f"Режим: {gc.parser_mode or 'sources'}",
             f"Источников в запуске: {len(names)}",
             *([f"- {x}" for x in names] or ["- none"]),
-            "Браузер: открыт (headful) для BigFuture/Bold/Scholarships.com/Mastersportal, "
+            "Браузер: открыт (headful) для BigFuture/Bold/Scholarships.com/Mastersportal/Unigo, "
             "если не задан RUN_ALL_ALLOW_HEADLESS=1. IEFA — HTTP по умолчанию, только лог в терминале.",
             "",
             "Статус: выполняется...",
@@ -240,7 +243,7 @@ def main() -> None:
         f"Ручная проверка доменов: {len(manual_check)}",
         *(manual_check or ["- none"]),
         "",
-        "Браузер: headful для BigFuture/Bold/Scholarships.com/Mastersportal; IEFA — окно Chromium "
+        "Браузер: headful для BigFuture/Bold/Scholarships.com/Mastersportal/Unigo; IEFA — окно Chromium "
         "только при IEFA_VISIBLE_BROWSER=1 (иначе HTTP без окна). "
         "Лог: PYTHONUNBUFFERED / python -u.",
     ]
