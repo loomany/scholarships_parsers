@@ -24,3 +24,8 @@ bold_captcha_detected.*
 .tmp_*.py
 audit_international_report*.json
 discovery_outputs/
+
+# VPS migration staging (secrets)
+.vps-env-staging/
+ops/.vps-env-staging/
+ops/vps/.vps-deploy/
