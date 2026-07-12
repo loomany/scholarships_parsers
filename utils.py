@@ -265,6 +265,49 @@ def _find_id_by_source_fingerprint(
     return rows[0]["id"] if rows else None
 
 
+def _find_row_by_slug(client: Client, slug: str) -> dict[str, Any] | None:
+    res = (
+        client.table("scholarships")
+        .select("id,source,slug")
+        .eq("slug", slug)
+        .limit(1)
+        .execute()
+    )
+    rows = res.data or []
+    row = rows[0] if rows else None
+    return row if isinstance(row, dict) else None
+
+
+def _slug_for_insert(
+    client: Client,
+    slug: str | None,
+    source: str,
+    record: Mapping[str, Any],
+) -> str | None:
+    base = _clean_text(slug)
+    if not base:
+        return None
+    if not _find_row_by_slug(client, base):
+        return base
+
+    seed = "|".join(
+        str(record.get(k) or "").strip()
+        for k in ("source", "source_id", "url", "title")
+    )
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8]
+    source_part = "".join(ch if ch.isalnum() else "-" for ch in source.lower())
+    suffix = f"{source_part[:16].strip('-')}-{digest}".strip("-")
+    max_base_len = max(1, 120 - len(suffix) - 1)
+    candidate = f"{base[:max_base_len].rstrip('-')}-{suffix}"
+    for attempt in range(2, 10):
+        if not _find_row_by_slug(client, candidate):
+            return candidate
+        suffix_n = f"{suffix}-{attempt}"
+        max_base_len = max(1, 120 - len(suffix_n) - 1)
+        candidate = f"{base[:max_base_len].rstrip('-')}-{suffix_n}"
+    return candidate
+
+
 def _load_existing_row_by_id(client: Client, row_id: str) -> dict[str, Any] | None:
     res = client.table("scholarships").select("*").eq("id", row_id).limit(1).execute()
     rows = res.data or []
@@ -370,6 +413,12 @@ def _upsert_scholarship_connected(record: Mapping[str, Any]) -> dict[str, Any]:
     if row_id is None:
         row_id = _find_id_by_source_fingerprint(client, source, fingerprint)
 
+    if row_id is None:
+        slug = _clean_text(prepared.get("slug"))
+        slug_row = _find_row_by_slug(client, slug) if slug else None
+        if slug_row and _norm_text(slug_row.get("source")) == _norm_text(source):
+            row_id = str(slug_row["id"])
+
     existing_row = _load_existing_row_by_id(client, row_id) if row_id is not None else None
     prepared = _preserve_provider_fields(prepared, existing_row)
     prepared = _preserve_country_eligibility_fields(prepared, existing_row)
@@ -401,6 +450,7 @@ def _upsert_scholarship_connected(record: Mapping[str, Any]) -> dict[str, Any]:
 
     if row_id is None:
         # Новая запись (created_at / updated_at по умолчанию из БД)
+        payload["slug"] = _slug_for_insert(client, payload.get("slug"), source, payload)
         res = client.table("scholarships").insert(payload).execute()
         rows = res.data or []
         if not rows:

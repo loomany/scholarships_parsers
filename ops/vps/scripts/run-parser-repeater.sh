@@ -26,5 +26,6 @@ source "${ENV_FILE}"
 set +a
 export PYTHONUNBUFFERED=1
 export PYTHONIOENCODING=utf-8
+export SOURCE_TIMEOUT_SECONDS="${SOURCE_TIMEOUT_SECONDS:-3600}"
 cd "${APP}"
 exec nice -n 10 ionice -c2 -n7 "${VENV_PY}" -u repeater.py >>"${LOG_FILE}" 2>&1

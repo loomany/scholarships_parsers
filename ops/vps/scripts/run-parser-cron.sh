@@ -34,6 +34,7 @@ flock -n "${LOCK_FILE}" nice -n 10 ionice -c2 -n7 bash -lc "
   set +a
   export PYTHONUNBUFFERED=1
   export PYTHONIOENCODING=utf-8
+  export SOURCE_TIMEOUT_SECONDS="\${SOURCE_TIMEOUT_SECONDS:-3600}"
   cd \"${APP}\"
   exec \"${VENV_PY}\" -u run_all.py
 " >>"${LOG_FILE}" 2>&1
